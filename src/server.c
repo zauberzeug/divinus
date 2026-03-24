@@ -1522,6 +1522,12 @@ void *server_thread(void *vargp) {
         if ((req.clntFd = accept(server_fd, NULL, NULL)) == -1)
             break;
 
+        {
+            int flag = 1;
+            if (setsockopt(req.clntFd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0)
+                HAL_WARNING("server", "setsockopt(TCP_NODELAY) failed");
+        }
+
         parse_request(&req);
 
         respond_request(&req);
