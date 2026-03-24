@@ -267,6 +267,7 @@ enum ConfigError parse_app_config(void) {
     app_config.mirror = false;
     app_config.flip = false;
     app_config.antiflicker = 0;
+    app_config.level3dnr = 1;
 
     app_config.night_mode_enable = false;
     app_config.ir_sensor_pin = 999;
@@ -375,6 +376,7 @@ enum ConfigError parse_app_config(void) {
         goto RET_ERR;
     parse_int(&ini, "isp", "antiflicker", -1, 60, &app_config.antiflicker);
     parse_int(&ini, "isp", "exposure", 0, 333333, &app_config.exposure);
+    parse_int(&ini, "isp", "level3dnr", 0, 7, &app_config.level3dnr);
 
     parse_bool(&ini, "mdns", "enable", &app_config.mdns_enable);
 
