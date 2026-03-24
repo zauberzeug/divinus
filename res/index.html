@@ -289,6 +289,31 @@
 								<td><input type="number" id="isp_level3dnr" min="0" max="7" placeholder="0-7"></td>
 								<td></td>
 							</tr>
+							<tr>
+								<td><label for="isp_mirror">Mirror</label></td>
+								<td><select id="isp_mirror">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+								<td></td>
+							</tr>
+							<tr>
+								<td><label for="isp_flip">Flip</label></td>
+								<td><select id="isp_flip">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+								<td></td>
+							</tr>
+							<tr>
+								<td><label for="isp_antiflicker">Anti-flicker&nbsp;(Hz)</label></td>
+								<td><select id="isp_antiflicker">
+									<option value="-1">OFF</option>
+									<option value="50">50</option>
+									<option value="60">60</option>
+								</select></td>
+								<td></td>
+							</tr>
 						</table>
 					</fieldset>
 				</div>
@@ -471,6 +496,10 @@
 								<td><input type="number" id="mjpeg_fps"></td>
 							</tr>
 							<tr>
+								<td><label for="mjpeg_bitrate">Bitrate&nbsp;(kbps)</label></td>
+								<td><input type="number" id="mjpeg_bitrate"></td>
+							</tr>
+							<tr>
 								<td><label for="mjpeg_mode">Rate control</label></td>
 								<td><select id="mjpeg_mode">
 									<option value="CBR">CBR</option>
@@ -563,6 +592,13 @@
 							<tr>
 								<td><label for="night_manual">Manual</label></td>
 								<td><select id="night_manual">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="night_grayscale">Grayscale</label></td>
+								<td><select id="night_grayscale">
 									<option value="false">OFF</option>
 									<option value="true">ON</option>
 								</select></td>
