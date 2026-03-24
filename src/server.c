@@ -1365,7 +1365,7 @@ void respond_request(http_request_t *req) {
                 unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
-                if (EQUALS(key, "value")) {
+                if (EQUALS(key, "exposure") || EQUALS(key, "value")) {
                     int result = strtol(value, &remain, 10);
                     if (remain != value && result >= 0 && result <= 333333) {
                         app_config.exposure = result;

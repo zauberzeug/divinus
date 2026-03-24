@@ -184,6 +184,7 @@
 
 		function onLoad() {
 			apiRead('audio');
+			apiRead('exposure');
 			apiRead('jpeg');
 			apiRead('mp4');
 			apiRead('mjpeg');
@@ -250,6 +251,20 @@
 		</div>
 		<div class="c cont">
 			<h2 class="unl">Media</h2>
+			<div class="row">
+				<div class="12 col box">
+					<fieldset>
+						<legend>ISP</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="exposure_exposure">Exposure&nbsp;(&micro;s)</label></td>
+								<td><input type="number" id="exposure_exposure" min="0" max="333333" step="1000" placeholder="0 = auto"></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('exposure')" class="btn right">Apply</a>
+					</fieldset>
+				</div>
+			</div>
 			<div class="row">
 				<div class="12 col box">
 					<fieldset>
