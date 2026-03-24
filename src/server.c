@@ -1401,6 +1401,20 @@ void respond_request(http_request_t *req) {
                     int result = strtol(value, &remain, 10);
                     if (remain != value && result >= 0 && result <= 7)
                         app_config.level3dnr = result;
+                } else if (EQUALS(key, "mirror")) {
+                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
+                        app_config.mirror = 1;
+                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
+                        app_config.mirror = 0;
+                } else if (EQUALS(key, "flip")) {
+                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
+                        app_config.flip = 1;
+                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
+                        app_config.flip = 0;
+                } else if (EQUALS(key, "antiflicker")) {
+                    int result = strtol(value, &remain, 10);
+                    if (remain != value && result >= -1 && result <= 60)
+                        app_config.antiflicker = result;
                 }
             }
         }
@@ -1409,7 +1423,11 @@ void respond_request(http_request_t *req) {
             "Content-Type: application/json;charset=UTF-8\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "{\"level3dnr\":%d}", app_config.level3dnr);
+            "{\"level3dnr\":%d,\"mirror\":%s,\"flip\":%s,\"antiflicker\":%d}",
+            app_config.level3dnr,
+            app_config.mirror ? "true" : "false",
+            app_config.flip ? "true" : "false",
+            app_config.antiflicker);
         send_and_close(req->clntFd, response, respLen);
         return;
     }
