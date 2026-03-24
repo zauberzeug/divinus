@@ -1367,19 +1367,9 @@ void respond_request(http_request_t *req) {
                 if (!key || !*key || !value || !*value) continue;
                 if (EQUALS(key, "value")) {
                     int result = strtol(value, &remain, 10);
-                    if (remain != value && result >= 0) {
+                    if (remain != value && result >= 0 && result <= 333333) {
                         app_config.exposure = result;
-                        int ret = set_exposure(result);
-                        if (ret) {
-                            respLen = sprintf(response,
-                                "HTTP/1.1 500 Internal Server Error\r\n"
-                                "Content-Type: application/json;charset=UTF-8\r\n"
-                                "Connection: close\r\n"
-                                "\r\n"
-                                "{\"error\":\"set_exposure failed\",\"code\":%d}", ret);
-                            send_and_close(req->clntFd, response, respLen);
-                            return;
-                        }
+                        set_exposure(result);
                     }
                 }
             }

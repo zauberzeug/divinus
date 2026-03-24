@@ -276,11 +276,13 @@ void set_grayscale(bool active) {
 
 int set_exposure(unsigned int micros) {
     int ret = -1;
+    pthread_mutex_lock(&chnMtx);
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
         case HAL_PLATFORM_I6:  ret = i6_sensor_exposure(micros); break;
 #endif
     }
+    pthread_mutex_unlock(&chnMtx);
     return ret;
 }
 
