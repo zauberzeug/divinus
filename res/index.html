@@ -103,6 +103,28 @@
 			}
 		}
 
+		function restartDivinus() {
+			var req = new XMLHttpRequest();
+			req.open('GET', '/exit');
+			req.send();
+			setTimeout(function() { location.reload(); }, 3000);
+		}
+
+		function saveAndRestart() {
+			if (!confirm('Save settings and restart? The stream will briefly disconnect.')) return;
+			apiApply('exposure');
+			apiApply('isp');
+			apiApply('mp4');
+			apiApply('mjpeg');
+			apiApply('jpeg');
+			apiApply('audio');
+			apiApply('record');
+			setTimeout(function() {
+				saveConfig();
+				setTimeout(function() { restartDivinus(); }, 500);
+			}, 500);
+		}
+
 		function saveConfig() {
 			var req = new XMLHttpRequest();
 			req.onreadystatechange = function() {
@@ -246,7 +268,7 @@
 		<div class="c bg-black menu pv2 row" tabindex="0">
 			<b><label for="media-modal" class="lbl-modal ph2 gray">Divinus</label></b>
 			<div class="col">
-				<a href="javascript:saveConfig()" class="ph2">Save</a>
+				<a href="javascript:saveAndRestart()" class="ph2">Save &amp; Restart</a>
 				<label for="media-modal" class="btn primary close">Close</label>
 			</div>
 		</div>
@@ -263,9 +285,9 @@
 								<td><a href="javascript:apiApply('exposure')" class="btn">Apply</a></td>
 							</tr>
 							<tr>
-								<td><label for="isp_level3dnr">3D noise reduction&nbsp;<span class="small gray">(restart)</span></label></td>
+								<td><label for="isp_level3dnr">3D noise reduction</label></td>
 								<td><input type="number" id="isp_level3dnr" min="0" max="7" placeholder="0-7"></td>
-								<td><a href="javascript:apiApply('isp')" class="btn">Apply</a></td>
+								<td></td>
 							</tr>
 						</table>
 					</fieldset>
@@ -308,7 +330,6 @@
 							</tr>
 						</table>
 						<button id="record_state" class="btn" onclick="toggleRecord(this)"></button>
-						<a href="javascript:apiApply('record')" class="btn right">Apply</a>
 					</fieldset>
 				</div>
 			</div>
@@ -337,7 +358,6 @@
 								<td><input type="number" id="audio_srate"></td>
 							</tr>
 						</table>
-						<a href="javascript:apiApply('audio')" class="btn right">Apply</a>
 					</fieldset>
 				</div>
 				<div class="6 col box">
@@ -364,7 +384,6 @@
 								<td><input type="number" id="jpeg_qfactor"></td>
 							</tr>
 						</table>
-						<a href="javascript:apiApply('jpeg')" class="btn right">Apply</a>
 					</fieldset>
 				</div>
 			</div>
@@ -391,6 +410,10 @@
 							<tr>
 								<td><label for="mp4_fps">Framerate</label></td>
 								<td><input type="number" id="mp4_fps"></td>
+							</tr>
+							<tr>
+								<td><label for="mp4_gop">GOP&nbsp;(I-frame interval)</label></td>
+								<td><input type="number" id="mp4_gop" min="1" max="300"></td>
 							</tr>
 							<tr>
 								<td><label for="mp4_bitrate">Bitrate (kbps)</label></td>
@@ -422,7 +445,6 @@
 								</select></td>
 							</tr>
 						</table>
-						<a href="javascript:apiApply('mp4')" class="btn right">Apply</a>
 					</fieldset>
 				</div>
 				<div class="6 col box">
@@ -457,7 +479,6 @@
 								</select></td>
 							</tr>
 						</table>
-						<a href="javascript:apiApply('mjpeg')" class="btn right">Apply</a>
 					</fieldset>
 				</div>
 			</div>

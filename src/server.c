@@ -1026,6 +1026,10 @@ void respond_request(http_request_t *req) {
                     short result = strtol(value, &remain, 10);
                     if (remain != value)
                         app_config.mp4_fps = result;
+                } else if (EQUALS(key, "gop")) {
+                    short result = strtol(value, &remain, 10);
+                    if (remain != value && result >= 1)
+                        app_config.mp4_gop = result;
                 } else if (EQUALS(key, "bitrate")) {
                     short result = strtol(value, &remain, 10);
                     if (remain != value)
@@ -1082,11 +1086,11 @@ void respond_request(http_request_t *req) {
             "Content-Type: application/json;charset=UTF-8\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "{\"enable\":%s,\"width\":%d,\"height\":%d,\"fps\":%d,"
+            "{\"enable\":%s,\"width\":%d,\"height\":%d,\"fps\":%d,\"gop\":%d,"
             "\"h265\":%s,\"mode\":\"%s\",\"profile\":\"%s\",\"bitrate\":%d}",
             app_config.mp4_enable ? "true" : "false",
-            app_config.mp4_width, app_config.mp4_height, app_config.mp4_fps, h265, mode,
-            profile, app_config.mp4_bitrate);
+            app_config.mp4_width, app_config.mp4_height, app_config.mp4_fps,
+            app_config.mp4_gop, h265, mode, profile, app_config.mp4_bitrate);
         send_and_close(req->clntFd, response, respLen);
         return;
     }
