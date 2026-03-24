@@ -103,6 +103,14 @@
 			}
 		}
 
+		function restartDivinus() {
+			if (!confirm('Restart Divinus? The stream will briefly disconnect.')) return;
+			var req = new XMLHttpRequest();
+			req.open('GET', '/exit');
+			req.send();
+			setTimeout(function() { location.reload(); }, 3000);
+		}
+
 		function saveConfig() {
 			var req = new XMLHttpRequest();
 			req.onreadystatechange = function() {
@@ -247,6 +255,7 @@
 			<b><label for="media-modal" class="lbl-modal ph2 gray">Divinus</label></b>
 			<div class="col">
 				<a href="javascript:saveConfig()" class="ph2">Save</a>
+				<a href="javascript:restartDivinus()" class="ph2">Restart</a>
 				<label for="media-modal" class="btn primary close">Close</label>
 			</div>
 		</div>
