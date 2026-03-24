@@ -30,7 +30,7 @@ void *aenc_thread(void) {
         mp4_ingest_audio(mp3Buf.buf, mp3FrmSize);
         pthread_mutex_unlock(&mp4Mtx);
 
-        if (app_config.rtsp_enable)
+        if (app_config.rtsp_enable && rtspHandle)
             rtp_send_mp3(rtspHandle, mp3Buf.buf, mp3FrmSize);
 
         rtmp_ingest_audio(mp3Buf.buf, mp3FrmSize);
