@@ -218,6 +218,8 @@ int m6_config_load(char *path)
     return m6_isp.fnLoadChannelConfig(_m6_isp_dev, _m6_isp_chn, path, 1234);
 }
 
+extern int _i6_level3dnr;
+
 int m6_pipeline_create(char sensor, short width, short height, char mirror, char flip, char framerate)
 {
     int ret;
@@ -321,7 +323,7 @@ int m6_pipeline_create(char sensor, short width, short height, char mirror, char
     {
         m6_isp_para param;
         param.hdr = M6_HDR_OFF;
-        param.level3DNR = 1;
+        param.level3DNR = _i6_level3dnr;
         param.mirror = 0;
         param.flip = 0;
         param.rotate = 0;

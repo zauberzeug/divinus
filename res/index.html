@@ -185,6 +185,7 @@
 		function onLoad() {
 			apiRead('audio');
 			apiRead('exposure');
+			apiRead('isp');
 			apiRead('jpeg');
 			apiRead('mp4');
 			apiRead('mjpeg');
@@ -259,9 +260,14 @@
 							<tr>
 								<td><label for="exposure_exposure">Exposure&nbsp;(&micro;s)</label></td>
 								<td><input type="number" id="exposure_exposure" min="0" max="333333" step="1000" placeholder="0 = auto"></td>
+								<td><a href="javascript:apiApply('exposure')" class="btn">Apply</a></td>
+							</tr>
+							<tr>
+								<td><label for="isp_level3dnr">3D noise reduction&nbsp;<span class="small gray">(restart)</span></label></td>
+								<td><input type="number" id="isp_level3dnr" min="0" max="7" placeholder="0-7"></td>
+								<td><a href="javascript:apiApply('isp')" class="btn">Apply</a></td>
 							</tr>
 						</table>
-						<a href="javascript:apiApply('exposure')" class="btn right">Apply</a>
 					</fieldset>
 				</div>
 			</div>

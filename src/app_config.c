@@ -110,6 +110,8 @@ int save_app_config(void) {
     fprintf(file, "  mirror: %s\n", app_config.mirror ? "true" : "false");
     fprintf(file, "  flip: %s\n", app_config.flip ? "true" : "false");
     fprintf(file, "  antiflicker: %d\n", app_config.antiflicker);
+    fprintf(file, "  exposure: %u\n", app_config.exposure);
+    fprintf(file, "  level3dnr: %d\n", app_config.level3dnr);
 
     fprintf(file, "mdns:\n");
     fprintf(file, "  enable: %s\n", app_config.mdns_enable ? "true" : "false");
@@ -267,6 +269,7 @@ enum ConfigError parse_app_config(void) {
     app_config.mirror = false;
     app_config.flip = false;
     app_config.antiflicker = 0;
+    app_config.level3dnr = 1;
 
     app_config.night_mode_enable = false;
     app_config.ir_sensor_pin = 999;
@@ -375,6 +378,7 @@ enum ConfigError parse_app_config(void) {
         goto RET_ERR;
     parse_int(&ini, "isp", "antiflicker", -1, 60, &app_config.antiflicker);
     parse_int(&ini, "isp", "exposure", 0, 333333, &app_config.exposure);
+    parse_int(&ini, "isp", "level3dnr", 0, 7, &app_config.level3dnr);
 
     parse_bool(&ini, "mdns", "enable", &app_config.mdns_enable);
 

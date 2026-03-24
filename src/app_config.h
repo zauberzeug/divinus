@@ -42,6 +42,7 @@ struct AppConfig {
     bool flip;
     int antiflicker;
     unsigned int exposure;
+    int level3dnr;
 
     // [osd]
     bool osd_enable;

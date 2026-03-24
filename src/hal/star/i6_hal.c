@@ -215,9 +215,12 @@ int i6_config_load(char *path)
     return i6_isp.fnLoadChannelConfig(_i6_isp_chn, path, 1234);
 }
 
+int _i6_level3dnr = 1;
+
 int i6_pipeline_create(char sensor, short width, short height, char mirror, char flip, char framerate)
 {
     int ret;
+    int level3dnr = _i6_level3dnr;
 
     _i6_snr_index = sensor;
     _i6_snr_profile = -1;
@@ -314,7 +317,7 @@ int i6_pipeline_create(char sensor, short width, short height, char mirror, char
         i6e_vpe_para param;
         memset(&param, 0, sizeof(param));
         param.hdr = I6_HDR_OFF;
-        param.level3DNR = 1;
+        param.level3DNR = level3dnr;
         param.mirror = 0;
         param.flip = 0;
         param.lensAdjOn = 0;
@@ -336,7 +339,7 @@ int i6_pipeline_create(char sensor, short width, short height, char mirror, char
         i6_vpe_para param;
         memset(&param, 0, sizeof(param));
         param.hdr = I6_HDR_OFF;
-        param.level3DNR = 1;
+        param.level3DNR = level3dnr;
         param.mirror = 0;
         param.flip = 0;
         param.lensAdjOn = 0;
