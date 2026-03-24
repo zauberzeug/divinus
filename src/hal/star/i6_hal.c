@@ -215,12 +215,12 @@ int i6_config_load(char *path)
     return i6_isp.fnLoadChannelConfig(_i6_isp_chn, path, 1234);
 }
 
-char _i6_level3dnr = 1;
+int _i6_level3dnr = 1;
 
 int i6_pipeline_create(char sensor, short width, short height, char mirror, char flip, char framerate)
 {
     int ret;
-    char level3dnr = _i6_level3dnr;
+    int level3dnr = _i6_level3dnr;
 
     _i6_snr_index = sensor;
     _i6_snr_profile = -1;

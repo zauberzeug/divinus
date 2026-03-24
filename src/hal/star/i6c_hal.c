@@ -225,6 +225,8 @@ int i6c_config_load(char *path)
     return i6c_isp.fnLoadChannelConfig(_i6c_isp_dev, _i6c_isp_chn, path, 1234);
 }
 
+extern int _i6_level3dnr;
+
 int i6c_pipeline_create(char sensor, short width, short height, char mirror, char flip, char framerate)
 {
     int ret;
@@ -343,7 +345,7 @@ int i6c_pipeline_create(char sensor, short width, short height, char mirror, cha
     {
         i6c_isp_para param;
         param.hdr = I6C_HDR_OFF;
-        param.level3DNR = 1;
+        param.level3DNR = _i6_level3dnr;
         param.mirror = 0;
         param.flip = 0;
         param.rotate = 0;

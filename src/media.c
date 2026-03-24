@@ -775,9 +775,13 @@ int start_sdk(void) {
             _i6_level3dnr = app_config.level3dnr;
             ret = i6_pipeline_create(0, width,
             height, app_config.mirror, app_config.flip, framerate); break;
-        case HAL_PLATFORM_I6C: ret = i6c_pipeline_create(0, width,
+        case HAL_PLATFORM_I6C:
+            _i6_level3dnr = app_config.level3dnr;
+            ret = i6c_pipeline_create(0, width,
             height, app_config.mirror, app_config.flip, framerate); break;
-        case HAL_PLATFORM_M6:  ret = m6_pipeline_create(0, width,
+        case HAL_PLATFORM_M6:
+            _i6_level3dnr = app_config.level3dnr;
+            ret = m6_pipeline_create(0, width,
             height, app_config.mirror, app_config.flip, framerate); break;
         case HAL_PLATFORM_RK:  ret = rk_pipeline_create(width, height); break;
 #elif defined(__arm__) && !defined(__ARM_PCS_VFP)

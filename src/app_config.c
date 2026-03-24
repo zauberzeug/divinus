@@ -110,6 +110,8 @@ int save_app_config(void) {
     fprintf(file, "  mirror: %s\n", app_config.mirror ? "true" : "false");
     fprintf(file, "  flip: %s\n", app_config.flip ? "true" : "false");
     fprintf(file, "  antiflicker: %d\n", app_config.antiflicker);
+    fprintf(file, "  exposure: %u\n", app_config.exposure);
+    fprintf(file, "  level3dnr: %d\n", app_config.level3dnr);
 
     fprintf(file, "mdns:\n");
     fprintf(file, "  enable: %s\n", app_config.mdns_enable ? "true" : "false");
