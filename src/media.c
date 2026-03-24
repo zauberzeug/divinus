@@ -530,6 +530,7 @@ int enable_mjpeg(void) {
         config.framerate = app_config.mjpeg_fps;
         config.bitrate = app_config.mjpeg_bitrate;
         config.maxBitrate = app_config.mjpeg_bitrate * 5 / 4;
+        config.minQual = config.maxQual = app_config.jpeg_qfactor;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)
