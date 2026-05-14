@@ -32,13 +32,12 @@
 #include <sys/sysinfo.h>
 #else
 #include <linux/sysinfo.h>
+extern int sysinfo (struct sysinfo *__info);
 #endif
 
 #ifdef __UCLIBC__
 extern int asprintf(char **restrict strp, const char *restrict fmt, ...);
 #endif
-
-extern int sysinfo (struct sysinfo *__info);
 
 void hal_identify(void);
 float hal_temperature_read(void);

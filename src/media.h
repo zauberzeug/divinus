@@ -10,6 +10,7 @@
 
 #include "app_config.h"
 #include "error.h"
+#include "hal/globals.h"
 #include "hal/types.h"
 #include "http_post.h"
 #include "jpeg.h"
@@ -19,7 +20,6 @@
 #include "server.h"
 #include "stream.h"
 
-extern char audioOn, recordOn, udpOn;
 extern rtsp_handle rtspHandle;
 
 int sdk_start(void);
