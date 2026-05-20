@@ -27,7 +27,7 @@ typedef struct __rtsp_obj_t *rtsp_handle;
    SPS and PPS parameters are automatically collected during execution. */
 
 void rtp_disable_audio(rtsp_handle h);
-int rtp_send_h26x(rtsp_handle h, unsigned char *buf, size_t len, char isH265);
+int rtp_send_h26x(rtsp_handle h, unsigned char *buf, size_t len, char isH265, unsigned long long capture_us);
 int rtp_send_mp3(rtsp_handle h, unsigned char *buf, size_t len);
 
 extern void rtsp_finish(rtsp_handle h);
