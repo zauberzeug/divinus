@@ -48,7 +48,7 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
     to_addr.sin_port = t->client_port_rtcp;
 
     ASSERT((send_bytes = send(t->server_rtcp_fd,
-        &(rtcp),36,0)) == 36, ({
+        &(rtcp),28,0)) == 28, ({
                 ERR("send:%d:%s¥n",send_bytes,strerror(errno));
                 return FAILURE;}));
 
