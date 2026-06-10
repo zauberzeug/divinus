@@ -303,12 +303,29 @@ void send_pcm_to_client(hal_audframe *frame) {
     pthread_mutex_unlock(&client_fds_mutex);
 }
 
-void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
-    static char prefix_buf[128];
+void send_mjpeg_to_client(char index, char *buf, ssize_t size, unsigned long long timestamp) {
+    static char prefix_buf[160];
+    static long long wallOffsetUs = 0;
+
+    /* Map the encoder's monotonic capture clock onto the wall clock; the
+       offset is recalibrated whenever the two diverge by more than a second
+       (first frame, encoder restart, or a system clock step) */
+    {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        long long nowUs = (long long)tv.tv_sec * 1000000 + tv.tv_usec;
+        long long mappedUs = (long long)timestamp + wallOffsetUs;
+        if (mappedUs < nowUs - 1000000 || mappedUs > nowUs + 1000000)
+            wallOffsetUs = nowUs - (long long)timestamp;
+    }
+    unsigned long long wallUs = timestamp + wallOffsetUs;
+
     ssize_t prefix_size = sprintf(prefix_buf,
         "--boundarydonotcross\r\n"
         "Content-Type:image/jpeg\r\n"
-        "Content-Length: %lu\r\n\r\n", size);
+        "Content-Length: %lu\r\n"
+        "X-Timestamp: %llu.%06llu\r\n\r\n", size,
+        wallUs / 1000000, wallUs % 1000000);
     buf[size++] = '\r';
     buf[size++] = '\n';
 

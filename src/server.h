@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -33,7 +34,7 @@ int start_server();
 int stop_server();
 
 void send_jpeg_to_client(char index, char *buf, ssize_t size);
-void send_mjpeg_to_client(char index, char *buf, ssize_t size);
+void send_mjpeg_to_client(char index, char *buf, ssize_t size, unsigned long long timestamp);
 void send_h26x_to_client(char index, hal_vidstream *stream);
 void send_mp3_to_client(char *buf, ssize_t size);
 void send_mp4_to_client(char index, hal_vidstream *stream, char isH265);
