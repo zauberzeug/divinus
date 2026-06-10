@@ -27,14 +27,14 @@
 
 #define HAL_DANGER(mod, x, ...) \
     do { \
-        fprintf(stderr, "[%s] \033[31m", (mod)); \
+        fprintf(stderr, "\033[0m[%s] \033[31m", (mod)); \
         fprintf(stderr, (x), ##__VA_ARGS__); \
         fprintf(stderr, "\033[0m"); \
     } while (0)
 
 #define HAL_ERROR(mod, x, ...) \
     do { \
-        fprintf(stderr, "[%s] \033[31m", (mod)); \
+        fprintf(stderr, "\033[0m[%s] \033[31m", (mod)); \
         fprintf(stderr, (x), ##__VA_ARGS__); \
         fprintf(stderr, "\033[0m"); \
         return EXIT_FAILURE; \
@@ -42,17 +42,20 @@
 
 #define HAL_INFO(mod, x, ...) \
     do { \
-        fprintf(stderr, "[%s] ", (mod)); \
+        fprintf(stderr, "\033[0m[%s] ", (mod)); \
         fprintf(stderr, (x), ##__VA_ARGS__); \
     } while (0)
 
 #define HAL_WARNING(mod, x, ...) \
     do { \
-        fprintf(stderr, "[%s] \033[33m", (mod)); \
+        fprintf(stderr, "\033[0m[%s] \033[33m", (mod)); \
         fprintf(stderr, (x), ##__VA_ARGS__); \
         fprintf(stderr, "\033[0m"); \
     } while (0)
 
+#ifndef ABS
+#define ABS(x) ((x) < 0 ? -(x) : (x))
+#endif
 #ifndef ALIGN_BACK
 #define ALIGN_BACK(x, a) (((x) / (a)) * (a))
 #endif
@@ -74,6 +77,7 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #endif
 
+#define CLEAR(x) memset(&(x), 0, sizeof(x))
 #define CONTAINS(a, b) strstr(a, b)
 #define EMPTY(x) (x[0] == '\0')
 #define ENDS_WITH(a, b) \

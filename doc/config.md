@@ -34,6 +34,8 @@ This document describes the fields that can be found within a configuration file
 - **mirror**: Boolean to turn on image mirroring (default: `false`).
 - **flip**: Boolean to turn on image flipping (default: `false`).
 - **antiflicker**: Antiflicker setting in Hz (default: `60`).
+- **exposure**: Fixed sensor exposure time in microseconds, 0 restores auto exposure; lowers the framerate when the exposure time exceeds the frame interval (SigmaStar infinity6 only for now, default: `0`).
+- **level3dnr**: 3D noise reduction level from 0 to 7 (SigmaStar infinity6/6c/6e and Mercury6 only for now, default: `1`).
 
 ## mDNS section
 
@@ -117,6 +119,7 @@ This document describes the fields that can be found within a configuration file
 - **height**: Video height in pixels.
 - **fps**: Frames per second.
 - **bitrate**: Bitrate in kbps.
+- **qfactor**: JPEG compression quality factor.
 
 ## HTTP POST section
 
@@ -128,4 +131,4 @@ This document describes the fields that can be found within a configuration file
 - **width**: Image width sent in pixels.
 - **height**: Image height sent in pixels.
 - **interval**: Interval between requests in seconds.
-- **qfactor**: JPEG compression quality factor for HTTP POST.
+- **qfactor**: JPEG compression quality factor.

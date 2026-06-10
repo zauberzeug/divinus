@@ -11,11 +11,11 @@ unsigned int pcmPos, pcmSamp;
 short pcmSrc[SHINE_MAX_SAMPLES];
 
 void *aenc_thread(void) {
-    const uint32_t mp3FrmSize = 
+    const uint32_t mp3FrmSize =
         (app_config.audio_srate >= 32000 ? 144 : 72) *
-        (app_config.audio_bitrate * 1000) / 
+        (app_config.audio_bitrate * 1000) /
         app_config.audio_srate;
-    
+
     while (keepRunning && audioOn) {
         pthread_mutex_lock(&aencMtx);
         if (mp3Buf.offset < mp3FrmSize) {
@@ -47,7 +47,7 @@ int save_audio_stream(hal_audframe *frame) {
     int ret = EXIT_SUCCESS;
 
 #ifdef DEBUG_AUDIO
-    printf("[audio] data:%p - %02x %02x %02x %02x %02x %02x %02x %02x\n", 
+    printf("[audio] data:%p - %02x %02x %02x %02x %02x %02x %02x %02x\n",
         frame->data, frame->data[0][0], frame->data[0][1], frame->data[0][2], frame->data[0][3],
         frame->data[0][4], frame->data[0][5], frame->data[0][6], frame->data[0][7]);
     printf("        len:%d\n", frame->length[0]);
@@ -75,7 +75,7 @@ int save_audio_stream(hal_audframe *frame) {
     if (pcmLen > 0)
         memcpy(pcmSrc + pcmPos, srcPtr - pcmLen, pcmLen * 2);
     pcmPos += pcmLen;
-    
+
     return ret;
 }
 
@@ -93,20 +93,18 @@ int save_video_stream(char index, hal_vidstream *stream) {
                 send_mp4_to_client(index, stream, isH265);
                 if (recordOn) send_mp4_to_record(stream, isH265);
                 pthread_mutex_unlock(&mp4Mtx);
-                
+
                 send_h26x_to_client(index, stream);
             }
             if (app_config.rtsp_enable && rtspHandle)
-                for (int i = 0; i < stream->count; i++)
-                    rtp_send_h26x(rtspHandle, stream->pack[i].data + stream->pack[i].offset,
-                        stream->pack[i].length - stream->pack[i].offset, isH265);
+                rtp_send_h26x(rtspHandle, stream, isH265);
 
             if (app_config.stream_enable) {
                 for (int i = 0; i < stream->count; i++) {
-                    udp_stream_send_nal(stream->pack[i].data + stream->pack[i].offset, 
-                        stream->pack[i].length - stream->pack[i].offset, 
+                    udp_stream_send_nal(stream->pack[i].data + stream->pack[i].offset,
+                        stream->pack[i].length - stream->pack[i].offset,
                         stream->pack[i].nalu[0].type == NalUnitType_CodedSliceIdr, isH265);
-                    
+
                     rtmp_ingest_video(&stream->pack[i], isH265);
                 }
             }
@@ -153,13 +151,13 @@ int save_video_stream(char index, hal_vidstream *stream) {
     return EXIT_SUCCESS;
 }
 
-int start_streaming(void) {
+int media_start(void) {
     int ret = EXIT_SUCCESS;
 
     for (int i = 0; app_config.stream_dests[i] && *app_config.stream_dests[i]; i++) {
         if (STARTS_WITH(app_config.stream_dests[i], "rtmp://")) {
             flv_set_config(app_config.mp4_width, app_config.mp4_height, app_config.mp4_fps,
-                app_config.audio_enable ? HAL_AUDCODEC_MP3 : HAL_AUDCODEC_UNSPEC, 
+                app_config.audio_enable ? HAL_AUDCODEC_MP3 : HAL_AUDCODEC_UNSPEC,
                 app_config.audio_bitrate, 1, app_config.audio_srate);
             rtmp_init(app_config.stream_dests[i]);
             continue;
@@ -204,14 +202,14 @@ int start_streaming(void) {
                     else return EXIT_FAILURE;
                 }
             }
-            
+
             if (udp_stream_add_client(dst, port) != -1)
                 HAL_INFO("media", "Starting streaming to %s...\n", app_config.stream_dests[i]);
         }
     }
 }
 
-void stop_streaming(void) {
+void media_stop(void) {
     if (udpOn) {
         udp_stream_close();
         udpOn = 0;
@@ -247,7 +245,7 @@ void request_idr(void) {
 #elif defined(__riscv) || defined(__riscv__)
         case HAL_PLATFORM_CVI: cvi_video_request_idr(index); break;
 #endif
-    }  
+    }
     pthread_mutex_unlock(&chnMtx);
 }
 
@@ -372,7 +370,7 @@ int unbind_channel(char index, char jpeg) {
     }
 }
 
-int disable_video(char index, char jpeg) {
+int media_video_disable(char index, char jpeg) {
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
         case HAL_PLATFORM_I6:  return i6_video_destroy(index);
@@ -391,11 +389,11 @@ int disable_video(char index, char jpeg) {
 #elif defined(__riscv) || defined(__riscv__)
         case HAL_PLATFORM_CVI: return cvi_video_destroy(index);
 #endif
-    }    
+    }
     return 0;
 }
 
-void disable_audio(void) {
+void media_audio_disable(void) {
     if (!audioOn) return;
 
     audioOn = 0;
@@ -424,7 +422,7 @@ void disable_audio(void) {
     }
 }
 
-int enable_audio(void) {
+int media_audio_enable(void) {
     int ret = EXIT_SUCCESS;
 
     if (audioOn) return ret;
@@ -504,7 +502,7 @@ int enable_audio(void) {
     return ret;
 }
 
-int disable_mjpeg(void) {
+int media_mjpeg_disable(void) {
     int ret;
 
     for (char i = 0; i < chnCount; i++) {
@@ -512,25 +510,25 @@ int disable_mjpeg(void) {
         if (chnState[i].payload != HAL_VIDCODEC_MJPG) continue;
 
         if (ret = unbind_channel(i, 1))
-            HAL_ERROR("media", "Unbinding channel %d failed with %#x!\n%s\n", 
+            HAL_ERROR("media", "Unbinding channel %d failed with %#x!\n%s\n",
                 i, ret, errstr(ret));
 
-        if (ret = disable_video(i, 1))
-            HAL_ERROR("media", "Disabling encoder %d failed with %#x!\n%s\n", 
+        if (ret = media_video_disable(i, 1))
+            HAL_ERROR("media", "Disabling encoder %d failed with %#x!\n%s\n",
                 i, ret, errstr(ret));
     }
 
     return EXIT_SUCCESS;
 }
 
-int enable_mjpeg(void) {
+int media_mjpeg_enable(void) {
     int ret;
 
     int index = take_next_free_channel(true);
 
     if (ret = create_channel(index, app_config.mjpeg_width,
         app_config.mjpeg_height, app_config.mjpeg_fps, 1))
-        HAL_ERROR("media", "Creating channel %d failed with %#x!\n%s\n", 
+        HAL_ERROR("media", "Creating channel %d failed with %#x!\n%s\n",
             index, ret, errstr(ret));
 
     {
@@ -542,7 +540,7 @@ int enable_mjpeg(void) {
         config.framerate = app_config.mjpeg_fps;
         config.bitrate = app_config.mjpeg_bitrate;
         config.maxBitrate = app_config.mjpeg_bitrate * 5 / 4;
-        config.minQual = config.maxQual = app_config.jpeg_qfactor;
+        config.minQual = config.maxQual = app_config.mjpeg_qfactor;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)
@@ -565,7 +563,7 @@ int enable_mjpeg(void) {
         }
 
         if (ret)
-            HAL_ERROR("media", "Creating encoder %d failed with %#x!\n%s\n", 
+            HAL_ERROR("media", "Creating encoder %d failed with %#x!\n%s\n",
                 index, ret, errstr(ret));
     }
 
@@ -576,7 +574,7 @@ int enable_mjpeg(void) {
     return EXIT_SUCCESS;
 }
 
-int disable_mp4(void) {
+int media_mp4_disable(void) {
     int ret;
 
     for (char i = 0; i < chnCount; i++) {
@@ -585,32 +583,32 @@ int disable_mp4(void) {
             chnState[i].payload != HAL_VIDCODEC_H265) continue;
 
         if (ret = unbind_channel(i, 1))
-            HAL_ERROR("media", "Unbinding channel %d failed with %#x!\n%s\n", 
+            HAL_ERROR("media", "Unbinding channel %d failed with %#x!\n%s\n",
                 i, ret, errstr(ret));
 
-        if (ret = disable_video(i, 1))
-            HAL_ERROR("media", "Disabling encoder %d failed with %#x!\n%s\n", 
+        if (ret = media_video_disable(i, 1))
+            HAL_ERROR("media", "Disabling encoder %d failed with %#x!\n%s\n",
                 i, ret, errstr(ret));
     }
 
     return EXIT_SUCCESS;
 }
 
-int enable_mp4(void) {
+int media_mp4_enable(void) {
     int ret;
 
     int index = take_next_free_channel(true);
 
-    if (ret = create_channel(index, app_config.mp4_width, 
+    if (ret = create_channel(index, app_config.mp4_width,
         app_config.mp4_height, app_config.mp4_fps, 0))
-        HAL_ERROR("media", "Creating channel %d failed with %#x!\n%s\n", 
+        HAL_ERROR("media", "Creating channel %d failed with %#x!\n%s\n",
             index, ret, errstr(ret));
 
     {
         hal_vidconfig config;
         config.width = app_config.mp4_width;
         config.height = app_config.mp4_height;
-        config.codec = app_config.mp4_codecH265 ? 
+        config.codec = app_config.mp4_codecH265 ?
             HAL_VIDCODEC_H265 : HAL_VIDCODEC_H264;
         config.mode = app_config.mp4_mode;
         config.profile = app_config.mp4_profile;
@@ -640,11 +638,11 @@ int enable_mp4(void) {
         }
 
         if (ret)
-            HAL_ERROR("media", "Creating encoder %d failed with %#x!\n%s\n", 
+            HAL_ERROR("media", "Creating encoder %d failed with %#x!\n%s\n",
                 index, ret, errstr(ret));
 
         mp4_set_config(app_config.mp4_width, app_config.mp4_height, app_config.mp4_fps,
-            app_config.audio_enable ? HAL_AUDCODEC_MP3 : HAL_AUDCODEC_UNSPEC, 
+            app_config.audio_enable ? HAL_AUDCODEC_MP3 : HAL_AUDCODEC_UNSPEC,
             app_config.audio_bitrate, 1, app_config.audio_srate);
     }
 
@@ -655,7 +653,7 @@ int enable_mp4(void) {
     return EXIT_SUCCESS;
 }
 
-int start_sdk(void) {
+int sdk_start(void) {
     int ret;
 
     switch (plat) {
@@ -759,7 +757,7 @@ int start_sdk(void) {
             ret, errstr(ret));
 
     if (app_config.audio_enable) {
-        ret = enable_audio();
+        ret = media_audio_enable();
         if (ret)
             HAL_ERROR("media", "Audio initialization failed with %#x!\n%s\n",
                 ret, errstr(ret));
@@ -820,10 +818,10 @@ int start_sdk(void) {
         pthread_attr_destroy(&thread_attr);
     }
 
-    if (app_config.mp4_enable && (ret = enable_mp4()))
+    if (app_config.mp4_enable && (ret = media_mp4_enable()))
         HAL_ERROR("media", "MP4 initialization failed with %#x!\n", ret);
 
-    if (app_config.mjpeg_enable && (ret = enable_mjpeg()))
+    if (app_config.mjpeg_enable && (ret = media_mjpeg_enable()))
         HAL_ERROR("media", "MJPEG initialization failed with %#x!\n", ret);
 
     if (app_config.jpeg_enable && (ret = jpeg_init()))
@@ -872,7 +870,7 @@ int start_sdk(void) {
     return EXIT_SUCCESS;
 }
 
-int stop_sdk(void) {
+int sdk_stop(void) {
     pthread_join(vidPid, NULL);
 
     if (app_config.jpeg_enable)
@@ -919,7 +917,7 @@ int stop_sdk(void) {
     }
 
     if (app_config.audio_enable)
-        disable_audio();
+        media_audio_disable();
 
     if (isp_thread)
         pthread_join(ispPid, NULL);

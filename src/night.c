@@ -76,11 +76,9 @@ void *night_thread(void) {
     } else {
         while (keepRunning) {
             bool state = false;
-            if (!gpio_read(app_config.ir_sensor_pin, &state)) {
-                sleep(app_config.check_interval_s);
-                continue;
-            }
-            if (!manual) night_mode(night_mode);
+            if (!gpio_read(app_config.ir_sensor_pin, &state))
+                if (!manual) night_mode(state);
+
             sleep(app_config.check_interval_s);
         }
     }
@@ -91,7 +89,7 @@ void *night_thread(void) {
     nightOn = 0;
 }
 
-int enable_night(void) {
+int night_enable(void) {
     int ret = EXIT_SUCCESS;
 
     if (nightOn) return ret;
@@ -113,7 +111,7 @@ int enable_night(void) {
     return ret;
 }
 
-void disable_night(void) {
+void night_disable(void) {
     if (!nightOn) return;
 
     nightOn = 0;

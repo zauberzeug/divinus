@@ -57,6 +57,12 @@ enum BufError write_moof(
     const uint32_t samples_aud_len) {
     enum BufError err;
     uint32_t start_atom = ptr->offset;
+
+    pos_sequence_number = 0;
+    pos_base_data_offset = 0;
+    pos_audio_media_decode_time = 0;
+    pos_video_media_decode_time = 0;
+
     err = put_u32_be(ptr, 0);
     chk_err;
     err = put_str4(ptr, "moof");
@@ -315,7 +321,8 @@ enum BufError write_trun(
     }
 
     if (first_sample_flags_present) {
-        err = put_u32_be(ptr, is_audio ? 0 : 33554432);
+        err = put_u32_be(ptr, is_audio ? 0x02000000 :
+            (samples_info[0].flags == 0 ? 0x02000000 : 0x01010000));
         chk_err; // 4 first_sample_flags
     }
     for (uint32_t i = 0; i < samples_info_count; ++i) {

@@ -1,7 +1,8 @@
 #include "server.h"
 
-#define MAX_CLIENTS 50
-#define REQSIZE (512 * 1024)
+#define HTTP_MAX_CLIENTS 50
+#define HTTP_MIN_BUF_SIZE 4096
+#define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -21,6 +22,8 @@ typedef struct {
     int clntFd;
     char *input, *method, *payload, *prot, *query, *uri;
     int paysize, total;
+    size_t buf_size;
+    int header_len;
 } http_request_t;
 
 struct {
@@ -28,7 +31,7 @@ struct {
     enum StreamType type;
     struct Mp4State mp4;
     unsigned int nalCnt;
-} client_fds[MAX_CLIENTS];
+} client_fds[HTTP_MAX_CLIENTS];
 
 typedef struct {
     char *name, *value;
@@ -56,17 +59,17 @@ pthread_mutex_t client_fds_mutex;
 
 static bool is_local_address(const char *client_ip) {
     if (!client_ip) return false;
-    
+
     if (!strcmp(client_ip, "127.0.0.1") ||
         !strncmp(client_ip, "127.", 4))
         return true;
-    
+
     if (!strcmp(client_ip, "::1"))
         return true;
-    
+
     if (!strncmp(client_ip, "::ffff:127.", 11))
         return true;
-    
+
     return false;
 }
 
@@ -83,24 +86,24 @@ void free_client(int i) {
 }
 
 int send_to_fd(int fd, char *buf, ssize_t size) {
-    ssize_t sent = 0, len = 0;
     if (fd < 0) return -1;
-
-    while (sent < size) {
-        len = send(fd, buf + sent, size - sent, MSG_NOSIGNAL);
-        if (len < 0) return -1;
-        sent += len;
+    ssize_t sent = send(fd, buf, size, MSG_DONTWAIT | MSG_NOSIGNAL);
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        return -1;
     }
-
     return EXIT_SUCCESS;
 }
 
-int send_to_fd_nonblock(int fd, char *buf, ssize_t size) {
-    if (fd < 0) return -1;
-
-    send(fd, buf, size, MSG_DONTWAIT | MSG_NOSIGNAL);
-
-    return EXIT_SUCCESS;
+int sendv_to_client(int i, struct iovec *iov, int iovcnt) {
+    ssize_t n = writev(client_fds[i].sockFd, iov, iovcnt);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        if (errno == EINTR) return 0;
+        free_client(i);
+        return -1;
+    }
+    return 0;
 }
 
 int send_to_client(int i, char *buf, ssize_t size) {
@@ -108,7 +111,7 @@ int send_to_client(int i, char *buf, ssize_t size) {
         free_client(i);
         return EXIT_FAILURE;
     }
-    
+
     return EXIT_SUCCESS;
 }
 
@@ -121,7 +124,7 @@ void send_http_error(int fd, int code) {
     const char *desc = "\0", *msg = "Unspecified";
     char buffer[256];
     int len;
-    
+
     for (int i = 0; i < sizeof(http_errors) / sizeof(*http_errors); i++) {
         if (http_errors[i].code == code) {
             desc = http_errors[i].desc;
@@ -129,53 +132,53 @@ void send_http_error(int fd, int code) {
             break;
         }
     }
-    
+
     len = snprintf(buffer, sizeof(buffer),
         "HTTP/1.1 %d %s\r\n"
         "Content-Type: text/plain\r\n"
         "Connection: close\r\n"
         "\r\n%s\r\n",
         code, msg, desc);
-    
+
     send_and_close(fd, buffer, len);
 }
 
 void send_h26x_to_client(char index, hal_vidstream *stream) {
     for (unsigned int i = 0; i < stream->count; ++i) {
         hal_vidpack *pack = &stream->pack[i];
-        unsigned int pack_len = pack->length - pack->offset;
         unsigned char *pack_data = pack->data + pack->offset;
 
         pthread_mutex_lock(&client_fds_mutex);
-        for (unsigned int i = 0; i < MAX_CLIENTS; ++i) {
-            if (client_fds[i].sockFd < 0) continue;
-            if (client_fds[i].type != STREAM_H26X) continue;
+        for (unsigned int c = 0; c < HTTP_MAX_CLIENTS; ++c) {
+            if (client_fds[c].sockFd < 0) continue;
+            if (client_fds[c].type != STREAM_H26X) continue;
 
             for (char j = 0; j < pack->naluCnt; j++) {
-                if (client_fds[i].nalCnt == 0 &&
+                if (client_fds[c].nalCnt == 0 &&
                     pack->nalu[j].type != NalUnitType_SPS &&
                     pack->nalu[j].type != NalUnitType_SPS_HEVC)
                     continue;
 
-#ifdef DEBUG_VIDEO
-                printf("NAL: %s send to %d\n", nal_type_to_str(pack->nalu[j].type), i);
-#endif
+                char len_buf[16];
+                int len_size = sprintf(len_buf, "%zX\r\n", pack->nalu[j].length);
 
-                static char len_buf[50];
-                ssize_t len_size = sprintf(len_buf, "%zX\r\n", pack->nalu[j].length);
-                if (send_to_client(i, len_buf, len_size) < 0)
-                    continue; // send <SIZE>\r\n
-                if (send_to_client(i, pack_data + pack->nalu[j].offset, pack->nalu[j].length) < 0)
-                    continue; // send <DATA>
-                if (send_to_client(i, "\r\n", 2) < 0)
-                    continue; // send \r\n
+                struct iovec iov[3];
+                iov[0].iov_base = len_buf;
+                iov[0].iov_len = len_size;
+                iov[1].iov_base = pack_data + pack->nalu[j].offset;
+                iov[1].iov_len = pack->nalu[j].length;
+                iov[2].iov_base = (void*)"\r\n";
+                iov[2].iov_len = 2;
 
-                client_fds[i].nalCnt++;
-                if (client_fds[i].nalCnt == 300) {
+                if (sendv_to_client(c, iov, 3) < 0)
+                    break;
+
+                client_fds[c].nalCnt++;
+                if (client_fds[c].nalCnt == 300) {
                     char end[] = "0\r\n\r\n";
-                    if (send_to_client(i, end, sizeof(end)) < 0)
-                        continue;
-                    free_client(i);
+                    send_to_client(c, end, sizeof(end) - 1);
+                    free_client(c);
+                    break;
                 }
             }
         }
@@ -184,18 +187,12 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
 }
 
 void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
-
     for (unsigned int i = 0; i < stream->count; ++i) {
         hal_vidpack *pack = &stream->pack[i];
-        unsigned int pack_len = pack->length - pack->offset;
         unsigned char *pack_data = pack->data + pack->offset;
 
         for (char j = 0; j < pack->naluCnt; j++) {
-#ifdef DEBUG_VIDEO
-            printf("NAL: %s received in packet %d\n", nal_type_to_str(pack->nalu[j].type), i);
-            printf("     starts at %p, ends at %p\n", pack_data + pack->nalu[j].offset, pack_data + pack->nalu[j].offset + pack->nalu[j].length);
-#endif
-            if ((pack->nalu[j].type == NalUnitType_SPS || pack->nalu[j].type == NalUnitType_SPS_HEVC) 
+            if ((pack->nalu[j].type == NalUnitType_SPS || pack->nalu[j].type == NalUnitType_SPS_HEVC)
                 && pack->nalu[j].length >= 4 && pack->nalu[j].length <= UINT16_MAX)
                 mp4_set_sps(pack_data + pack->nalu[j].offset + 4, pack->nalu[j].length - 4, isH265);
             else if ((pack->nalu[j].type == NalUnitType_PPS || pack->nalu[j].type == NalUnitType_PPS_HEVC)
@@ -210,9 +207,9 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
         }
 
         static enum BufError err;
-        static char len_buf[50];
+        char len_buf[50];
         pthread_mutex_lock(&client_fds_mutex);
-        for (unsigned int i = 0; i < MAX_CLIENTS; ++i) {
+        for (unsigned int i = 0; i < HTTP_MAX_CLIENTS; ++i) {
             if (client_fds[i].sockFd < 0) continue;
             if (client_fds[i].type != STREAM_MP4) continue;
 
@@ -222,11 +219,11 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
                 chk_err_continue ssize_t len_size =
                     sprintf(len_buf, "%zX\r\n", header_buf.offset);
                 if (send_to_client(i, len_buf, len_size) < 0)
-                    continue; // send <SIZE>\r\n
+                    continue;
                 if (send_to_client(i, header_buf.buf, header_buf.offset) < 0)
-                    continue; // send <DATA>
-                if (send_to_client(i, "\r\n", 2) < 0)
-                    continue; // send \r\n
+                    continue;
+                if (send_to_client(i, (void*)"\r\n", 2) < 0)
+                    continue;
 
                 client_fds[i].mp4.sequence_number = 0;
                 client_fds[i].mp4.base_data_offset = header_buf.offset;
@@ -243,24 +240,34 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
                 err = mp4_get_moof(&moof_buf);
                 chk_err_continue ssize_t len_size =
                     sprintf(len_buf, "%zX\r\n", (ssize_t)moof_buf.offset);
-                if (send_to_client(i, len_buf, len_size) < 0)
-                    continue; // send <SIZE>\r\n
-                if (send_to_client(i, moof_buf.buf, moof_buf.offset) < 0)
-                    continue; // send <DATA>
-                if (send_to_client(i, "\r\n", 2) < 0)
-                    continue; // send \r\n
+
+                struct iovec iov[3];
+                iov[0].iov_base = len_buf;
+                iov[0].iov_len = len_size;
+                iov[1].iov_base = moof_buf.buf;
+                iov[1].iov_len = moof_buf.offset;
+                iov[2].iov_base = (void*)"\r\n";
+                iov[2].iov_len = 2;
+
+                if (sendv_to_client(i, iov, 3) < 0)
+                    continue;
             }
             {
                 struct BitBuf mdat_buf;
                 err = mp4_get_mdat(&mdat_buf);
                 chk_err_continue ssize_t len_size =
                     sprintf(len_buf, "%zX\r\n", (ssize_t)mdat_buf.offset);
-                if (send_to_client(i, len_buf, len_size) < 0)
-                    continue; // send <SIZE>\r\n
-                if (send_to_client(i, mdat_buf.buf, mdat_buf.offset) < 0)
-                    continue; // send <DATA>
-                if (send_to_client(i, "\r\n", 2) < 0)
-                    continue; // send \r\n
+
+                struct iovec iov[3];
+                iov[0].iov_base = len_buf;
+                iov[0].iov_len = len_size;
+                iov[1].iov_base = mdat_buf.buf;
+                iov[1].iov_len = mdat_buf.offset;
+                iov[2].iov_base = (void*)"\r\n";
+                iov[2].iov_len = 2;
+
+                if (sendv_to_client(i, iov, 3) < 0)
+                    continue;
             }
         }
         pthread_mutex_unlock(&client_fds_mutex);
@@ -269,11 +276,11 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
 
 void send_mp3_to_client(char *buf, ssize_t size) {
     pthread_mutex_lock(&client_fds_mutex);
-    for (unsigned int i = 0; i < MAX_CLIENTS; ++i) {
+    for (unsigned int i = 0; i < HTTP_MAX_CLIENTS; ++i) {
         if (client_fds[i].sockFd < 0) continue;
         if (client_fds[i].type != STREAM_MP3) continue;
 
-        static char len_buf[50];
+        char len_buf[50];
         ssize_t len_size = sprintf(len_buf, "%zX\r\n", size);
         if (send_to_client(i, len_buf, len_size) < 0)
             continue; // send <SIZE>\r\n
@@ -287,11 +294,11 @@ void send_mp3_to_client(char *buf, ssize_t size) {
 
 void send_pcm_to_client(hal_audframe *frame) {
     pthread_mutex_lock(&client_fds_mutex);
-    for (unsigned int i = 0; i < MAX_CLIENTS; ++i) {
+    for (unsigned int i = 0; i < HTTP_MAX_CLIENTS; ++i) {
         if (client_fds[i].sockFd < 0) continue;
         if (client_fds[i].type != STREAM_PCM) continue;
 
-        static char len_buf[50];
+        char len_buf[50];
         ssize_t len_size = sprintf(len_buf, "%zX\r\n", frame->length[0]);
         if (send_to_client(i, len_buf, len_size) < 0)
             continue; // send <SIZE>\r\n
@@ -313,7 +320,7 @@ void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
     buf[size++] = '\n';
 
     pthread_mutex_lock(&client_fds_mutex);
-    for (unsigned int i = 0; i < MAX_CLIENTS; ++i) {
+    for (unsigned int i = 0; i < HTTP_MAX_CLIENTS; ++i) {
         if (client_fds[i].sockFd < 0) continue;
         if (client_fds[i].type != STREAM_MJPEG) continue;
 
@@ -337,7 +344,7 @@ void send_jpeg_to_client(char index, char *buf, ssize_t size) {
     buf[size++] = '\n';
 
     pthread_mutex_lock(&client_fds_mutex);
-    for (unsigned int i = 0; i < MAX_CLIENTS; ++i) {
+    for (unsigned int i = 0; i < HTTP_MAX_CLIENTS; ++i) {
         if (client_fds[i].sockFd < 0) continue;
         if (client_fds[i].type != STREAM_JPEG) continue;
 
@@ -359,18 +366,19 @@ struct jpegtask {
 };
 
 void *send_jpeg_thread(void *vargp) {
-    struct jpegtask task = *((struct jpegtask *)vargp);
+    struct jpegtask *task = (struct jpegtask *)vargp;
     hal_jpegdata jpeg = {0};
     HAL_INFO("server", "Requesting a JPEG snapshot (%ux%u, qfactor %u, color2Gray %d)...\n",
-        task.width, task.height, task.qfactor, task.color2Gray);
+        task->width, task->height, task->qfactor, task->color2Gray);
     int ret =
-        jpeg_get(task.width, task.height, task.qfactor, task.color2Gray, &jpeg);
+        jpeg_get(task->width, task->height, task->qfactor, task->color2Gray, &jpeg);
     if (ret) {
         HAL_DANGER("server", "Failed to receive a JPEG snapshot...\n");
         static char response[] =
             "HTTP/1.1 503 Internal Error\r\n"
             "Connection: close\r\n\r\n";
-        send_and_close(task.client_fd, response, sizeof(response) - 1); // zero ending string!
+        send_and_close(task->client_fd, response, sizeof(response) - 1); // zero ending string!
+        free(task);
         return NULL;
     }
     HAL_INFO("server", "JPEG snapshot has been received!\n");
@@ -381,11 +389,12 @@ void *send_jpeg_thread(void *vargp) {
         "Content-Length: %lu\r\n"
         "Connection: close\r\n\r\n",
         jpeg.jpegSize);
-    send_to_fd(task.client_fd, buf, buf_len);
-    send_to_fd(task.client_fd, jpeg.data, jpeg.jpegSize);
-    send_to_fd(task.client_fd, "\r\n", 2);
-    close_socket_fd(task.client_fd);
+    send_to_fd(task->client_fd, buf, buf_len);
+    send_to_fd(task->client_fd, jpeg.data, jpeg.jpegSize);
+    send_to_fd(task->client_fd, "\r\n", 2);
+    close_socket_fd(task->client_fd);
     free(jpeg.data);
+    free(task);
     HAL_INFO("server", "JPEG snapshot has been sent!\n");
     return NULL;
 }
@@ -480,25 +489,23 @@ void parse_request(http_request_t *req) {
             if (ip_in_cidr(client_ip, app_config.web_whitelist[i])) goto grant_access;
         close_socket_fd(req->clntFd);
         req->clntFd = -1;
-        req->total = 0;
         return;
     }
 
 grant_access:
-    req->total = 0;
-    int received = recv(req->clntFd, req->input, REQSIZE, 0);
-    if (received < 0)
-        HAL_WARNING("server", "Reading from client failed!\n");
-    else if (!received)
-        HAL_WARNING("server", "Client disconnected unexpectedly!\n");
-    req->total += received;
-
     if (req->total <= 0) return;
 
+    req->input[req->total] = '\0';
     char *state = NULL;
     req->method = strtok_r(req->input, " \t\r\n", &state);
     req->uri = strtok_r(NULL, " \t", &state);
     req->prot = strtok_r(NULL, " \t\r\n", &state);
+
+    if (!req->method || !req->uri || !req->prot) {
+        close_socket_fd(req->clntFd);
+        req->clntFd = -1;
+        return;
+    }
 
     HAL_INFO("server", "\x1b[32mNew request: (%s) %s\n"
         "         Received from: %s\x1b[0m\n",
@@ -507,42 +514,34 @@ grant_access:
     if (req->query = strchr(req->uri, '?'))
         *req->query++ = '\0';
     else
-        req->query = req->uri - 1;
+        req->query = NULL;
+
+    if (req->uri && strstr(req->uri, "..")) {
+        close_socket_fd(req->clntFd);
+        req->clntFd = -1;
+        return;
+    }
 
     http_header_t *h = http_headers;
-    char *l;
     while (h < http_headers + 16) {
         char *k, *v, *e;
         if (!(k = strtok_r(NULL, "\r\n: \t", &state)))
             break;
         v = strtok_r(NULL, "\r\n", &state);
+        if (!v) break;
         while (*v && *v == ' ' && v++);
         h->name = k;
         h++->value = v;
 #ifdef DEBUG_HTTP
         fprintf(stderr, "         (H) %s: %s\n", k, v);
 #endif
+        if (state >= req->input + req->header_len) break;
         e = v + 1 + strlen(v);
         if (e[1] == '\r' && e[2] == '\n')
             break;
     }
 
-    l = request_header("Content-Length");
-    req->paysize = l ? atol(l) : 0;
-
-    while (l && req->total < req->paysize) {
-        received = recv(req->clntFd, req->input + req->total, REQSIZE - req->total, 0);
-        if (received < 0) {
-            HAL_WARNING("server", "Reading from client failed!\n");
-            break;
-        } else if (!received) {
-            HAL_WARNING("server", "Client disconnected unexpectedly!\n");
-            break;
-        }
-        req->total += received;
-    }
-
-    req->payload = strtok_r(NULL, "\r\n", &state);
+    req->payload = req->input + req->header_len;
 }
 
 void respond_request(http_request_t *req) {
@@ -680,7 +679,7 @@ void respond_request(http_request_t *req) {
             "Connection: keep-alive\r\n\r\n");
         send_to_fd(req->clntFd, response, respLen);
         pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < MAX_CLIENTS; ++i)
+        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
             if (client_fds[i].sockFd < 0) {
                 client_fds[i].sockFd = req->clntFd;
                 client_fds[i].type = STREAM_MP3;
@@ -698,7 +697,7 @@ void respond_request(http_request_t *req) {
             "Connection: keep-alive\r\n\r\n");
         send_to_fd(req->clntFd, response, respLen);
         pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < MAX_CLIENTS; ++i)
+        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
             if (client_fds[i].sockFd < 0) {
                 client_fds[i].sockFd = req->clntFd;
                 client_fds[i].type = STREAM_PCM;
@@ -718,7 +717,7 @@ void respond_request(http_request_t *req) {
             "Connection: keep-alive\r\n\r\n");
         send_to_fd(req->clntFd, response, respLen);
         pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < MAX_CLIENTS; ++i)
+        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
             if (client_fds[i].sockFd < 0) {
                 client_fds[i].sockFd = req->clntFd;
                 client_fds[i].type = STREAM_H26X;
@@ -738,7 +737,7 @@ void respond_request(http_request_t *req) {
             "Connection: keep-alive\r\n\r\n");
         send_to_fd(req->clntFd, response, respLen);
         pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < MAX_CLIENTS; ++i)
+        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
             if (client_fds[i].sockFd < 0) {
                 client_fds[i].sockFd = req->clntFd;
                 client_fds[i].type = STREAM_MP4;
@@ -758,7 +757,7 @@ void respond_request(http_request_t *req) {
             "Content-Type: multipart/x-mixed-replace; boundary=boundarydonotcross\r\n\r\n");
         send_to_fd(req->clntFd, response, respLen);
         pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < MAX_CLIENTS; ++i)
+        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
             if (client_fds[i].sockFd < 0) {
                 client_fds[i].sockFd = req->clntFd;
                 client_fds[i].type = STREAM_MJPEG;
@@ -770,14 +769,14 @@ void respond_request(http_request_t *req) {
 
     if (app_config.jpeg_enable && STARTS_WITH(req->uri, "/image.jpg")) {
         {
-            struct jpegtask task;
-            task.client_fd = req->clntFd;
-            task.width = app_config.jpeg_width;
-            task.height = app_config.jpeg_height;
-            task.qfactor = app_config.jpeg_qfactor;
-            task.color2Gray = 0;
+            struct jpegtask *task = malloc(sizeof(struct jpegtask));
+            task->client_fd = req->clntFd;
+            task->width = app_config.jpeg_width;
+            task->height = app_config.jpeg_height;
+            task->qfactor = app_config.jpeg_qfactor;
+            task->color2Gray = 0;
 
-            if (!EMPTY(req->query)) {
+            if (req->query) {
                 char *remain;
                 while (req->query) {
                     char *value = split(&req->query, "&");
@@ -787,23 +786,23 @@ void respond_request(http_request_t *req) {
                     if (EQUALS(key, "width")) {
                         short result = strtol(value, &remain, 10);
                         if (remain != value)
-                            task.width = result;
+                            task->width = result;
                     }
                     else if (EQUALS(key, "height")) {
                         short result = strtol(value, &remain, 10);
                         if (remain != value)
-                            task.height = result;
+                            task->height = result;
                     }
                     else if (EQUALS(key, "qfactor")) {
                         short result = strtol(value, &remain, 10);
                         if (remain != value)
-                            task.qfactor = result;
+                            task->qfactor = result;
                     }
                     else if (EQUALS(key, "color2gray") || EQUALS(key, "gray")) {
                         if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
-                            task.color2Gray = 1;
+                            task->color2Gray = 1;
                         else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
-                            task.color2Gray = 0;
+                            task->color2Gray = 0;
                     }
                 }
             }
@@ -816,17 +815,21 @@ void respond_request(http_request_t *req) {
             size_t new_stacksize = 16 * 1024;
             if (pthread_attr_setstacksize(&thread_attr, new_stacksize))
                 HAL_DANGER("jpeg", "Can't set stack size %zu\n", new_stacksize);
-            pthread_create(
-                &thread_id, &thread_attr, send_jpeg_thread, (void *)&task);
+            if (pthread_create(
+                &thread_id, &thread_attr, send_jpeg_thread, (void *)task)) {
+                HAL_DANGER("jpeg", "Can't create thread\n");
+                free(task);
+            }
             if (pthread_attr_setstacksize(&thread_attr, stacksize))
                 HAL_DANGER("jpeg", "Can't set stack size %zu\n", stacksize);
             pthread_attr_destroy(&thread_attr);
+            pthread_detach(thread_id);
         }
         return;
     }
 
     if (EQUALS(req->uri, "/api/audio")) {
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -854,8 +857,8 @@ void respond_request(http_request_t *req) {
                 }
             }
 
-            disable_audio();
-            if (app_config.audio_enable) enable_audio();
+            media_audio_disable();
+            if (app_config.audio_enable) media_audio_enable();
         }
 
         respLen = sprintf(response,
@@ -872,7 +875,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/cmd")) {
         int result = -1;
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -881,11 +884,15 @@ void respond_request(http_request_t *req) {
                 char *key = split(&value, "=");
                 if (!key || !*key) continue;
                 if (EQUALS(key, "save")) {
-                    result = save_app_config();
+                    result = app_config_save();
                     if (!result)
                         HAL_INFO("server", "Configuration saved!\n");
                     else
                         HAL_WARNING("server", "Failed to save configuration!\n");
+                    break;
+                } else if (EQUALS(key, "restart")) {
+                    kill(getpid(), SIGHUP);
+                    result = 0;
                     break;
                 }
             }
@@ -901,8 +908,48 @@ void respond_request(http_request_t *req) {
         return;
     }
 
+    if (EQUALS(req->uri, "/api/isp")) {
+        if (req->query) {
+            char *remain;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "mirror")) {
+                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
+                        app_config.mirror = 1;
+                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
+                        app_config.mirror = 0;
+                } else if (EQUALS(key, "flip")) {
+                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
+                        app_config.flip = 1;
+                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
+                        app_config.flip = 0;
+                } else if (EQUALS(key, "antiflicker")) {
+                    app_config.antiflicker = strtol(value, &remain, 10);
+                } else if (EQUALS(key, "level3dnr")) {
+                    int result = strtol(value, &remain, 10);
+                    if (remain != value && result >= 0 && result <= 7)
+                        app_config.level3dnr = result;
+                }
+            }
+        }
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"mirror\":%s, \"flip\":%s, \"antiflicker\":%d, \"level3dnr\":%d}",
+            app_config.mirror ? "true" : "false", app_config.flip ? "true" : "false",
+            app_config.antiflicker, app_config.level3dnr);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/jpeg")) {
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -942,7 +989,7 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/mjpeg")) {
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -967,6 +1014,14 @@ void respond_request(http_request_t *req) {
                     short result = strtol(value, &remain, 10);
                     if (remain != value)
                         app_config.mjpeg_fps = result;
+                } else if (EQUALS(key, "bitrate")) {
+                    short result = strtol(value, &remain, 10);
+                    if (remain != value)
+                        app_config.mjpeg_bitrate = result;
+                } else if (EQUALS(key, "qfactor")) {
+                    short result = strtol(value, &remain, 10);
+                    if (remain != value)
+                        app_config.mjpeg_qfactor = result;
                 } else if (EQUALS(key, "mode")) {
                     if (EQUALS_CASE(value, "CBR"))
                         app_config.mjpeg_mode = HAL_VIDMODE_CBR;
@@ -977,8 +1032,8 @@ void respond_request(http_request_t *req) {
                 }
             }
 
-            disable_mjpeg();
-            if (app_config.mjpeg_enable) enable_mjpeg();
+            media_mjpeg_disable();
+            if (app_config.mjpeg_enable) media_mjpeg_enable();
         }
 
         char mode[5] = "\0";
@@ -992,16 +1047,17 @@ void respond_request(http_request_t *req) {
             "Content-Type: application/json;charset=UTF-8\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "{\"enable\":%s,\"width\":%d,\"height\":%d,\"fps\":%d,\"mode\":\"%s\",\"bitrate\":%d}",
+            "{\"enable\":%s,\"width\":%d,\"height\":%d,\"fps\":%d,\"mode\":\"%s\","
+            "\"bitrate\":%d,\"qfactor\":%d}",
             app_config.mjpeg_enable ? "true" : "false",
             app_config.mjpeg_width, app_config.mjpeg_height, app_config.mjpeg_fps, mode,
-            app_config.mjpeg_bitrate);
+            app_config.mjpeg_bitrate, app_config.mjpeg_qfactor);
         send_and_close(req->clntFd, response, respLen);
         return;
     }
 
     if (EQUALS(req->uri, "/api/mp4")) {
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -1060,8 +1116,8 @@ void respond_request(http_request_t *req) {
                 }
             }
 
-            disable_mp4();
-            if (app_config.mp4_enable) enable_mp4();
+            media_mp4_disable();
+            if (app_config.mp4_enable) media_mp4_enable();
         }
 
         char h265[6] = "false";
@@ -1088,15 +1144,14 @@ void respond_request(http_request_t *req) {
             "\r\n"
             "{\"enable\":%s,\"width\":%d,\"height\":%d,\"fps\":%d,\"gop\":%d,"
             "\"h265\":%s,\"mode\":\"%s\",\"profile\":\"%s\",\"bitrate\":%d}",
-            app_config.mp4_enable ? "true" : "false",
-            app_config.mp4_width, app_config.mp4_height, app_config.mp4_fps,
-            app_config.mp4_gop, h265, mode, profile, app_config.mp4_bitrate);
+            app_config.mp4_enable ? "true" : "false", app_config.mp4_width, app_config.mp4_height,
+            app_config.mp4_fps, app_config.mp4_gop, h265, mode, profile, app_config.mp4_bitrate);
         send_and_close(req->clntFd, response, respLen);
         return;
     }
 
     if (EQUALS(req->uri, "/api/night")) {
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -1154,8 +1209,8 @@ void respond_request(http_request_t *req) {
                 }
             }
 
-            disable_night();
-            if (app_config.night_mode_enable) enable_night();
+            night_disable();
+            if (app_config.night_mode_enable) night_enable();
         }
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
@@ -1164,7 +1219,7 @@ void respond_request(http_request_t *req) {
             "\r\n"
             "{\"active\":%s,\"manual\":%s,\"grayscale\":%s,\"ircut\":%s,\"ircut_pin1\":%d,\"ircut_pin2\":%d,"
             "\"irled\":%s,\"irled_pin\":%d,\"irsense_pin\":%d,\"adc_device\":\"%s\",\"adc_threshold\":%d}",
-            app_config.night_mode_enable ? "true" : "false", night_manual_on() ? "true" : "false", 
+            app_config.night_mode_enable ? "true" : "false", night_manual_on() ? "true" : "false",
             night_grayscale_on() ? "true" : "false",
             night_ircut_on() ? "true" : "false", app_config.ir_cut_pin1, app_config.ir_cut_pin2,
             night_irled_on() ? "true" : "false", app_config.ir_led_pin, app_config.ir_sensor_pin,
@@ -1196,7 +1251,7 @@ void respond_request(http_request_t *req) {
 
                 char path[32];
 
-                if (!memcmp(payloadb, "\x89\x50\x4E\x47\xD\xA\x1A\xA", 8)) 
+                if (!memcmp(payloadb, "\x89\x50\x4E\x47\xD\xA\x1A\xA", 8))
                     sprintf(path, "/tmp/osd%d.png", id);
                 else
                     sprintf(path, "/tmp/osd%d.bmp", id);
@@ -1219,8 +1274,7 @@ void respond_request(http_request_t *req) {
                 return;
             }
         }
-        if (!EMPTY(req->query))
-        {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -1299,7 +1353,7 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/record")) {
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -1354,7 +1408,7 @@ void respond_request(http_request_t *req) {
             "{\"recording\":%s,\"start_time\":\"%s\",\"continuous\":%s,\"path\":\"%s\","
             "\"filename\":\"%s\",\"segment_duration\":%d,\"segment_size\":%d}",
                 recordOn ? "true" : "false", start_time, app_config.record_continuous ? "true" : "false",
-                app_config.record_path, app_config.record_filename, 
+                app_config.record_path, app_config.record_filename,
                 app_config.record_segment_duration, app_config.record_segment_size);
         send_and_close(req->clntFd, response, respLen);
         return;
@@ -1388,50 +1442,6 @@ void respond_request(http_request_t *req) {
         return;
     }
 
-    if (EQUALS(req->uri, "/api/isp")) {
-        if (!EMPTY(req->query)) {
-            char *remain;
-            while (req->query) {
-                char *value = split(&req->query, "&");
-                if (!value || !*value) continue;
-                unescape_uri(value);
-                char *key = split(&value, "=");
-                if (!key || !*key || !value || !*value) continue;
-                if (EQUALS(key, "level3dnr")) {
-                    int result = strtol(value, &remain, 10);
-                    if (remain != value && result >= 0 && result <= 7)
-                        app_config.level3dnr = result;
-                } else if (EQUALS(key, "mirror")) {
-                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
-                        app_config.mirror = 1;
-                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
-                        app_config.mirror = 0;
-                } else if (EQUALS(key, "flip")) {
-                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
-                        app_config.flip = 1;
-                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
-                        app_config.flip = 0;
-                } else if (EQUALS(key, "antiflicker")) {
-                    int result = strtol(value, &remain, 10);
-                    if (remain != value && result >= -1 && result <= 60)
-                        app_config.antiflicker = result;
-                }
-            }
-        }
-        respLen = sprintf(response,
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json;charset=UTF-8\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "{\"level3dnr\":%d,\"mirror\":%s,\"flip\":%s,\"antiflicker\":%d}",
-            app_config.level3dnr,
-            app_config.mirror ? "true" : "false",
-            app_config.flip ? "true" : "false",
-            app_config.antiflicker);
-        send_and_close(req->clntFd, response, respLen);
-        return;
-    }
-
     if (EQUALS(req->uri, "/api/status")) {
         struct sysinfo si;
         sysinfo(&si);
@@ -1452,7 +1462,7 @@ void respond_request(http_request_t *req) {
             "\r\n"
             "{\"chip\":\"%s\",\"loadavg\":[%.2f,%.2f,%.2f],\"memory\":\"%s\","
             "\"sensor\":\"%s\",\"temp\":\"%.1f\u00B0C\",\"uptime\":\"%s\"}",
-            chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0, 
+            chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0,
             memory, sensor, hal_temperature_read(), uptime);
         send_and_close(req->clntFd, response, respLen);
         return;
@@ -1460,7 +1470,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/time")) {
         struct timespec t;
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -1496,13 +1506,15 @@ void respond_request(http_request_t *req) {
 }
 
 void *server_thread(void *vargp) {
-    http_request_t req = {0};
     int ret, server_fd = *((int *)vargp);
     int enable = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
         HAL_WARNING("server", "setsockopt(SO_REUSEADDR) failed");
         fflush(stdout);
     }
+
+    fcntl(server_fd, F_SETFL, fcntl(server_fd, F_GETFL, 0) | O_NONBLOCK);
+
     struct sockaddr_in client, server = {
         .sin_family = AF_INET,
         .sin_port = htons(app_config.web_port),
@@ -1516,27 +1528,141 @@ void *server_thread(void *vargp) {
     }
     listen(server_fd, 128);
 
-    req.input = malloc(REQSIZE);
+    struct pollfd fds[HTTP_MAX_CLIENTS + 1];
+    http_request_t reqs[HTTP_MAX_CLIENTS];
 
-    while (keepRunning) {
-        if ((req.clntFd = accept(server_fd, NULL, NULL)) == -1)
-            break;
-
-        parse_request(&req);
-
-        respond_request(&req);
+    for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
+        fds[i + 1].fd = -1;
+        reqs[i].clntFd = -1;
+        reqs[i].input = NULL;
     }
 
-    if (req.input)
-        free(req.input);
+    fds[0].fd = server_fd;
+    fds[0].events = POLLIN;
+
+    while (keepRunning) {
+        int poll_count = poll(fds, HTTP_MAX_CLIENTS + 1, 1000);
+        if (poll_count < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+
+        if (fds[0].revents & POLLIN) {
+            struct sockaddr_in client_sock;
+            socklen_t client_sock_len = sizeof(client_sock);
+            int clntFd = accept(server_fd, (struct sockaddr *)&client_sock, &client_sock_len);
+            if (clntFd >= 0) {
+                fcntl(clntFd, F_SETFL, fcntl(clntFd, F_GETFL, 0) | O_NONBLOCK);
+                int i = 0;
+                for (i = 0; i < HTTP_MAX_CLIENTS; i++) {
+                    if (fds[i+1].fd == -1) {
+                        fds[i+1].fd = clntFd;
+                        fds[i+1].events = POLLIN;
+                        reqs[i].clntFd = clntFd;
+                        reqs[i].total = 0;
+                        reqs[i].buf_size = HTTP_MIN_BUF_SIZE;
+                        reqs[i].input = malloc(reqs[i].buf_size + 1);
+                        reqs[i].header_len = 0;
+                        reqs[i].paysize = 0;
+                        break;
+                    }
+                }
+                if (i == HTTP_MAX_CLIENTS) {
+                    close_socket_fd(clntFd);
+                }
+            }
+        }
+
+        for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
+            if (fds[i + 1].fd != -1) {
+                if (fds[i + 1].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    close_socket_fd(fds[i + 1].fd);
+                    fds[i + 1].fd = -1;
+                    free(reqs[i].input);
+                    reqs[i].input = NULL;
+                    continue;
+                }
+                if (fds[i + 1].revents & POLLIN) {
+                    http_request_t *req = &reqs[i];
+
+                    if (req->total == req->buf_size) {
+                        req->buf_size *= 2;
+                        if (req->buf_size > HTTP_MAX_BUF_SIZE) {
+                            close_socket_fd(req->clntFd);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                            continue;
+                        }
+                        req->input = realloc(req->input, req->buf_size + 1);
+                    }
+
+                    int received = recv(req->clntFd, req->input + req->total, req->buf_size - req->total, 0);
+                    if (received < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                            continue;
+                        close_socket_fd(req->clntFd);
+                        fds[i + 1].fd = -1;
+                        free(req->input);
+                        req->input = NULL;
+                        continue;
+                    } else if (received == 0) {
+                        close_socket_fd(req->clntFd);
+                        fds[i + 1].fd = -1;
+                        free(req->input);
+                        req->input = NULL;
+                        continue;
+                    }
+                    req->total += received;
+
+                    if (req->header_len == 0) {
+                        char *hdr_end = memstr(req->input, "\r\n\r\n", req->total, 4);
+                        if (hdr_end) {
+                            req->header_len = (hdr_end + 4) - req->input;
+
+                            char *cl = req->input;
+                            req->paysize = 0;
+                            while (cl < hdr_end) {
+                                if (!strncasecmp(cl, "Content-Length:", 15)) {
+                                    req->paysize = atoi(cl + 15);
+                                    break;
+                                }
+                                cl = strchr(cl, '\n');
+                                if (!cl) break;
+                                cl++;
+                            }
+                        }
+                    }
+
+                    if (req->header_len > 0 && req->total >= req->header_len + req->paysize) {
+                        parse_request(req);
+                        if (req->clntFd != -1) {
+                            fcntl(req->clntFd, F_SETFL, fcntl(req->clntFd, F_GETFL, 0) & ~O_NONBLOCK);
+                            respond_request(req);
+                        }
+                        fds[i + 1].fd = -1;
+                        free(req->input);
+                        req->input = NULL;
+                    }
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
+        if (fds[i + 1].fd != -1) {
+            close_socket_fd(fds[i + 1].fd);
+            free(reqs[i].input);
+        }
+    }
 
     close_socket_fd(server_fd);
     HAL_INFO("server", "Thread has exited\n");
     return NULL;
 }
 
-int start_server() {
-    for (unsigned int i = 0; i < MAX_CLIENTS; i++) {
+int server_start() {
+    for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
         client_fds[i].sockFd = -1;
         client_fds[i].type = -1;
     }
@@ -1549,7 +1675,7 @@ int start_server() {
         pthread_attr_init(&thread_attr);
         size_t stacksize;
         pthread_attr_getstacksize(&thread_attr, &stacksize);
-        size_t new_stacksize = app_config.web_server_thread_stack_size + REQSIZE;
+        size_t new_stacksize = app_config.web_server_thread_stack_size;
         if (pthread_attr_setstacksize(&thread_attr, new_stacksize))
             HAL_WARNING("server", "Can't set stack size %zu\n", new_stacksize);
         if (pthread_create(
@@ -1563,7 +1689,7 @@ int start_server() {
     return EXIT_SUCCESS;
 }
 
-int stop_server() {
+int server_stop() {
     keepRunning = 0;
 
     close_socket_fd(server_fd);
