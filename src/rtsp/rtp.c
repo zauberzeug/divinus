@@ -165,12 +165,24 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
     MUST(con = trans->con, return FAILURE);
     if (!con->trans[track_id].server_port_rtp) return SUCCESS;
 
-    rtp->packet.header.seq = htons(con->trans[track_id].rtp_seq);
-    if (rtp->packet.header.m)
+    /* All packets of one access unit must carry the same RTP timestamp:
+       receivers delimit frames by timestamp change (plus the marker bit),
+       so a fragmented frame's packets must not straddle two timestamps.
+       Latch a fresh timestamp only when a new AU begins (the packet after a
+       marker). The previous code refreshed it on the marker packet itself,
+       i.e. the last fragment, leaving a frame's leading fragments stamped
+       with the previous frame's timestamp -- which made receivers merge
+       adjacent frames into one access unit (duplicate POC, corrupt video). */
+    if (con->trans[track_id].au_pending) {
         con->trans[track_id].rtp_timestamp = (millis() * 90) & UINT32_MAX;
+        con->trans[track_id].au_pending = 0;
+    }
+    rtp->packet.header.seq = htons(con->trans[track_id].rtp_seq);
     rtp->packet.header.ts = htonl(con->trans[track_id].rtp_timestamp);
     rtp->packet.header.ssrc = htonl(con->ssrc);
     con->trans[track_id].rtp_seq += 1;
+    if (rtp->packet.header.m)
+        con->trans[track_id].au_pending = 1;
 
     do  {
         send_bytes = send(con->trans[track_id].server_rtp_fd,

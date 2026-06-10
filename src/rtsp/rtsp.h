@@ -90,6 +90,7 @@ typedef struct {
     int rtcp_tick_org;
     unsigned short rtp_seq;
     unsigned int rtp_timestamp;
+    char au_pending;
 } transport_t;
 
 struct connection_item_t {
