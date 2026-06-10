@@ -266,7 +266,7 @@ enum ConfigError app_config_parse(void) {
     app_config.mjpeg_width = 640;
     app_config.mjpeg_height = 480;
     app_config.mjpeg_bitrate = 1024;
-    app_config.mjpeg_qfactor = 50;
+    app_config.mjpeg_qfactor = 0;
 
     app_config.mirror = false;
     app_config.flip = false;
@@ -565,7 +565,7 @@ enum ConfigError app_config_parse(void) {
             &ini, "mjpeg", "bitrate", 32, INT_MAX, &app_config.mjpeg_bitrate);
         if (err != CONFIG_OK)
             goto RET_ERR;
-        parse_int(&ini, "mjpeg", "qfactor", 1, 99, &app_config.mjpeg_qfactor);
+        parse_int(&ini, "mjpeg", "qfactor", 0, 99, &app_config.mjpeg_qfactor);
     }
 
     parse_bool(&ini, "http_post", "enable", &app_config.http_post_enable);

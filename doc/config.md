@@ -119,7 +119,7 @@ This document describes the fields that can be found within a configuration file
 - **height**: Video height in pixels.
 - **fps**: Frames per second.
 - **bitrate**: Bitrate in kbps.
-- **qfactor**: JPEG compression quality factor.
+- **qfactor**: JPEG compression quality factor, 0 inherits the JPEG section's qfactor (default: `0`).
 
 ## HTTP POST section
 
