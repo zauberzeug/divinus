@@ -96,10 +96,33 @@ int save_video_stream(char index, hal_vidstream *stream) {
                 
                 send_h26x_to_client(index, stream);
             }
-            if (app_config.rtsp_enable && rtspHandle)
+            if (app_config.rtsp_enable && rtspHandle) {
+                /* pack->timestamp is in the vendor PTS clock (microseconds).
+                   On this SoC the vendor clock runs ~430 ms ahead of
+                   CLOCK_MONOTONIC and the SDK stamps each pack at VENC output
+                   time, not at VIF sensor-latch — verified via MI_SYS_GetCurPts
+                   probe. We rebase from vendor mono to host wall-clock here;
+                   the constant camera-pipeline delay (VPE 3DNR + FRAMEBASE
+                   queue + VENC encode) is NOT subtracted and should be
+                   calibrated empirically per fps/3DNR config. */
+                unsigned long long capture_us = 0;
+                if (stream->count > 0 && stream->pack[0].timestamp) {
+                    struct timespec mono, real;
+                    if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0 &&
+                        clock_gettime(CLOCK_REALTIME, &real) == 0) {
+                        unsigned long long mono_us =
+                            (unsigned long long)mono.tv_sec * 1000000ULL + mono.tv_nsec / 1000ULL;
+                        unsigned long long real_us =
+                            (unsigned long long)real.tv_sec * 1000000ULL + real.tv_nsec / 1000ULL;
+                        unsigned long long cap_mono_us = stream->pack[0].timestamp;
+                        if (cap_mono_us <= mono_us)
+                            capture_us = real_us - (mono_us - cap_mono_us);
+                    }
+                }
                 for (int i = 0; i < stream->count; i++)
                     rtp_send_h26x(rtspHandle, stream->pack[i].data + stream->pack[i].offset,
-                        stream->pack[i].length - stream->pack[i].offset, isH265);
+                        stream->pack[i].length - stream->pack[i].offset, isH265, capture_us);
+            }
 
             if (app_config.stream_enable) {
                 for (int i = 0; i < stream->count; i++) {

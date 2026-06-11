@@ -32,6 +32,7 @@ static inline int __retrieve_sprop(rtsp_handle h, unsigned char *buf, size_t len
 struct __transfer_set_t {
     struct list_head_t list_head;
     rtsp_handle h;
+    unsigned long long capture_us;  /* wall-clock μs of frame capture, 0 = unknown */
 };
 
 /******************************************************************************
@@ -166,8 +167,8 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
     if (!con->trans[track_id].server_port_rtp) return SUCCESS;
 
     rtp->packet.header.seq = htons(con->trans[track_id].rtp_seq);
-    if (rtp->packet.header.m)
-        con->trans[track_id].rtp_timestamp = (millis() * 90) & UINT32_MAX;
+    /* rtp_timestamp is set per-frame in __rtp_setup_transfer from the capture
+       time, so every fragment of one frame carries the same RTP timestamp. */
     rtp->packet.header.ts = htonl(con->trans[track_id].rtp_timestamp);
     rtp->packet.header.ssrc = htonl(con->ssrc);
     con->trans[track_id].rtp_seq += 1;
@@ -203,7 +204,6 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
     struct connection_item_t *con;
     struct __transfer_set_t *trans_set = v;
     struct transfer_item_t *trans;
-    unsigned int timestamp_offset;
     int ret = FAILURE;
 
     list_upcast(con,e);
@@ -225,10 +225,15 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
         MUST(list_push(&trans_set->list_head, &trans->list_entry) == SUCCESS,
             goto error);
 
-        timestamp_offset = trans_set->h->stat.ts_offset;
-
-        con->trans[con->track_id].rtp_timestamp = 
-            ((unsigned int)con->trans[con->track_id].rtp_timestamp + timestamp_offset);
+        if (trans_set->capture_us) {
+            /* Carry the sensor capture time (wall-clock μs) into the RTP
+               timestamp at 90 kHz. All fragments of this frame share it. */
+            con->trans[con->track_id].rtp_timestamp =
+                (unsigned int)((trans_set->capture_us * 90ULL / 1000ULL) & UINT32_MAX);
+        } else {
+            con->trans[con->track_id].rtp_timestamp =
+                (unsigned int)((millis() * 90ULL) & UINT32_MAX);
+        }
     }
 
     ret = SUCCESS;
@@ -369,13 +374,13 @@ void rtp_disable_audio(rtsp_handle h)
     h->audioPt = 255;
 }
 
-int rtp_send_h26x(rtsp_handle h, unsigned char *buf, size_t len, char isH265)
+int rtp_send_h26x(rtsp_handle h, unsigned char *buf, size_t len, char isH265, unsigned long long capture_us)
 {
     unsigned char *nalptr = buf;
     size_t single_len = 0;
     int ret = FAILURE;
     int track_id = 0;
-    struct __transfer_set_t trans = {};
+    struct __transfer_set_t trans = { .capture_us = capture_us };
 
     /* checkout RTP packet */
     DASSERT(h, return FAILURE);

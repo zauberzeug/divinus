@@ -36,11 +36,19 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
     ts_h = (unsigned int)tv.tv_sec + 2208988800U;
     ts_l = (((double)tv.tv_usec) / 1e6) * 4294967296.0;
 
+    /* The SR's (NTP, RTP-ts) pair must describe the same instant. Per-frame
+       RTP timestamps are wall_clock_ms × 90 (set in rtp.c from the vendor's
+       capture time), so the matching RTP-ts for `tv` is the 90 kHz
+       representation of `tv` itself — not the cached last-frame value. */
+    unsigned long long now_ms =
+        (unsigned long long)tv.tv_sec * 1000ULL + (tv.tv_usec + 500ULL) / 1000ULL;
+    unsigned int sr_rtp_ts = (unsigned int)((now_ms * 90ULL) & UINT32_MAX);
+
     rtcp_t rtcp = { common: {version: 2, length: htons(6), p:0, count: 0, pt:RTCP_SR},
         r: { sr: { ssrc: htonl(con->ssrc),
             ntp_sec: htonl(ts_h),
             ntp_frac: htonl(ts_l),
-            rtp_ts: htonl(t->rtp_timestamp),
+            rtp_ts: htonl(sr_rtp_ts),
             psent: htonl(t->rtcp_packet_cnt),
             osent: htonl(t->rtcp_octet)}}};
 
@@ -48,7 +56,7 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
     to_addr.sin_port = t->client_port_rtcp;
 
     ASSERT((send_bytes = send(t->server_rtcp_fd,
-        &(rtcp),36,0)) == 36, ({
+        &(rtcp),28,0)) == 28, ({
                 ERR("send:%d:%s¥n",send_bytes,strerror(errno));
                 return FAILURE;}));
 

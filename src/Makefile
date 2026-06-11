@@ -8,7 +8,9 @@ $(OBJ): $(SRC:%.c=%.o)
 	$(CC) $^ -rdynamic $(OPT) -o $@
 
 %.o: %.c Makefile
-	$(CC) -c $< $(OPT) -o $@
+	$(CC) -c $< $(OPT) -MMD -MP -o $@
+
+-include $(SRC:%.c=%.d)
 
 clean:
-	rm -rf $(SRC:%.c=%.o) $(OBJ)
+	rm -rf $(SRC:%.c=%.o) $(SRC:%.c=%.d) $(OBJ)
