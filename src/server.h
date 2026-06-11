@@ -2,9 +2,11 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
+#include <poll.h>
 #include <regex.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -12,12 +14,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "app_config.h"
 #include "fmt/mp4.h"
 #include "fmt/nal.h"
+#include "hal/globals.h"
 #include "hal/types.h"
 #include "jpeg.h"
 #include "media.h"
@@ -27,11 +31,10 @@
 #include "region.h"
 #include "watchdog.h"
 
-extern char graceful, keepRunning, recordOn;
 extern time_t recordStartTime;
 
-int start_server();
-int stop_server();
+int server_start();
+int server_stop();
 
 void send_jpeg_to_client(char index, char *buf, ssize_t size);
 void send_mjpeg_to_client(char index, char *buf, ssize_t size);

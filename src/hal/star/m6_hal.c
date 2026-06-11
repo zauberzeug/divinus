@@ -100,14 +100,14 @@ int m6_audio_init(int samplerate, int gain)
     }
     if (ret = m6_aud.fnEnableDevice(_m6_aud_dev))
         return ret;
-    
+
     if (ret = m6_aud.fnEnableChannel(_m6_aud_dev, _m6_aud_chn))
         return ret;
     if (ret = m6_aud.fnSetVolume(_m6_aud_dev, _m6_aud_chn, gain))
         return ret;
 
     {
-        m6_sys_bind bind = { .module = M6_SYS_MOD_AI, 
+        m6_sys_bind bind = { .module = M6_SYS_MOD_AI,
             .device = _m6_aud_dev, .channel = _m6_aud_chn };
         if (ret = m6_sys.fnSetOutputDepth(0, &bind, 2, 4))
             return ret;
@@ -124,7 +124,7 @@ void *m6_audio_thread(void)
     memset(&frame, 0, sizeof(frame));
 
     while (keepRunning && audioOn) {
-        if (ret = m6_aud.fnGetFrame(_m6_aud_dev, _m6_aud_chn, 
+        if (ret = m6_aud.fnGetFrame(_m6_aud_dev, _m6_aud_chn,
             &frame, NULL, 128)) {
             HAL_WARNING("m6_aud", "Getting the frame failed "
                 "with %#x!\n", ret);
@@ -158,13 +158,13 @@ int m6_channel_bind(char index, char framerate)
         return ret;
 
     {
-        m6_sys_bind source = { .module = M6_SYS_MOD_SCL, 
+        m6_sys_bind source = { .module = M6_SYS_MOD_SCL,
             .device = _m6_scl_dev, .channel = _m6_scl_chn, .port = index };
         m6_sys_bind dest = { .module = M6_SYS_MOD_VENC,
-            .device = _m6_venc_dev[index] ? M6_VENC_DEV_MJPG_0 : M6_VENC_DEV_H26X_0, 
+            .device = _m6_venc_dev[index] ? M6_VENC_DEV_MJPG_0 : M6_VENC_DEV_H26X_0,
             .channel = index, .port = _m6_venc_port };
         if (ret = m6_sys.fnBindExt(0, &source, &dest, framerate, framerate,
-            _m6_venc_dev[index] >= M6_VENC_DEV_MJPG_0 ? 
+            _m6_venc_dev[index] >= M6_VENC_DEV_MJPG_0 ?
                 M6_SYS_LINK_FRAMEBASE : M6_SYS_LINK_REALTIME, 0))
             return ret;
     }
@@ -202,7 +202,7 @@ int m6_channel_unbind(char index)
         return ret;
 
     {
-        m6_sys_bind source = { .module = M6_SYS_MOD_SCL, 
+        m6_sys_bind source = { .module = M6_SYS_MOD_SCL,
             .device = _m6_scl_dev, .channel = _m6_scl_chn, .port = index };
         m6_sys_bind dest = { .module = M6_SYS_MOD_VENC,
             .device = _m6_venc_dev[index], .channel = index, .port = _m6_venc_port };
@@ -210,7 +210,7 @@ int m6_channel_unbind(char index)
             return ret;
     }
 
-    return EXIT_SUCCESS;    
+    return EXIT_SUCCESS;
 }
 
 int m6_config_load(char *path)
@@ -220,11 +220,11 @@ int m6_config_load(char *path)
 
 extern int _i6_level3dnr;
 
-int m6_pipeline_create(char sensor, short width, short height, char mirror, char flip, char framerate)
+int m6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate)
 {
     int ret;
 
-    _m6_snr_index = sensor;
+    _m6_snr_index = index;
     _m6_snr_profile = -1;
 
     {
@@ -243,7 +243,7 @@ int m6_pipeline_create(char sensor, short width, short height, char mirror, char
                 height > resolution.crop.height ||
                 framerate > resolution.maxFps)
                 continue;
-        
+
             _m6_snr_profile = i;
             if (ret = m6_snr.fnSetResolution(_m6_snr_index, _m6_snr_profile))
                 return ret;
@@ -263,6 +263,7 @@ int m6_pipeline_create(char sensor, short width, short height, char mirror, char
         return ret;
     if (ret = m6_snr.fnGetPlaneInfo(_m6_snr_index, 0, &_m6_snr_plane))
         return ret;
+    strncpy(sensor, _m6_snr_plane.sensName, sizeof(sensor) - 1);
     if (ret = m6_snr.fnEnable(_m6_snr_index))
         return ret;
 
@@ -278,10 +279,10 @@ int m6_pipeline_create(char sensor, short width, short height, char mirror, char
         if (ret = m6_vif.fnCreateGroup(_m6_vif_grp, &group))
             return ret;
     }
-    
+
     {
         m6_vif_dev device;
-        device.pixFmt = (m6_common_pixfmt)(_m6_snr_plane.bayer > M6_BAYER_END ? 
+        device.pixFmt = (m6_common_pixfmt)(_m6_snr_plane.bayer > M6_BAYER_END ?
             _m6_snr_plane.pixFmt : (M6_PIXFMT_RGB_BAYER + _m6_snr_plane.precision * M6_BAYER_END + _m6_snr_plane.bayer));
         device.crop = _m6_snr_plane.capt;
         device.field = 0;
@@ -297,7 +298,7 @@ int m6_pipeline_create(char sensor, short width, short height, char mirror, char
         port.capt = _m6_snr_plane.capt;
         port.dest.height = _m6_snr_plane.capt.height;
         port.dest.width = _m6_snr_plane.capt.width;
-        port.pixFmt = (m6_common_pixfmt)(_m6_snr_plane.bayer > M6_BAYER_END ? 
+        port.pixFmt = (m6_common_pixfmt)(_m6_snr_plane.bayer > M6_BAYER_END ?
             _m6_snr_plane.pixFmt : (M6_PIXFMT_RGB_BAYER + _m6_snr_plane.precision * M6_BAYER_END + _m6_snr_plane.bayer));
         port.frate = M6_VIF_FRATE_FULL;
         if (ret = m6_vif.fnSetPortConfig(_m6_vif_dev, _m6_vif_chn, &port))
@@ -363,7 +364,7 @@ int m6_pipeline_create(char sensor, short width, short height, char mirror, char
         return ret;
 
     {
-        m6_sys_bind source = { .module = M6_SYS_MOD_VIF, 
+        m6_sys_bind source = { .module = M6_SYS_MOD_VIF,
             .device = _m6_vif_dev, .channel = _m6_vif_chn, .port = 0 };
         m6_sys_bind dest = { .module = M6_SYS_MOD_ISP,
             .device = _m6_isp_dev, .channel = _m6_isp_chn, .port = _m6_isp_port };
@@ -373,7 +374,7 @@ int m6_pipeline_create(char sensor, short width, short height, char mirror, char
     }
 
     {
-        m6_sys_bind source = { .module = M6_SYS_MOD_ISP, 
+        m6_sys_bind source = { .module = M6_SYS_MOD_ISP,
             .device = _m6_isp_dev, .channel = _m6_isp_chn, .port = _m6_isp_port };
         m6_sys_bind dest = { .module = M6_SYS_MOD_SCL,
             .device = _m6_scl_dev, .channel = _m6_scl_chn, .port = 0 };
@@ -390,7 +391,7 @@ void m6_pipeline_destroy(void)
         m6_scl.fnDisablePort(_m6_scl_dev, _m6_scl_chn, i);
 
     {
-        m6_sys_bind source = { .module = M6_SYS_MOD_ISP, 
+        m6_sys_bind source = { .module = M6_SYS_MOD_ISP,
             .device = _m6_isp_dev, .channel = _m6_isp_chn, .port = _m6_isp_port };
         m6_sys_bind dest = { .module = M6_SYS_MOD_SCL,
             .device = _m6_scl_dev, .channel = _m6_scl_chn, .port = 0 };
@@ -407,8 +408,8 @@ void m6_pipeline_destroy(void)
 
     m6_isp.fnDestroyDevice(_m6_isp_dev);
 
-    {   
-        m6_sys_bind source = { .module = M6_SYS_MOD_VIF, 
+    {
+        m6_sys_bind source = { .module = M6_SYS_MOD_VIF,
             .device = _m6_vif_dev, .channel = _m6_vif_chn, .port = 0 };
         m6_sys_bind dest = { .module = M6_SYS_MOD_ISP,
             .device = _m6_isp_dev, .channel = _m6_isp_chn, .port = _m6_isp_port };
@@ -440,7 +441,7 @@ int m6_region_create(char handle, hal_rect rect, short opacity)
         if (ret = m6_rgn.fnCreateRegion(0, handle, &region))
             return ret;
     } else if (regionCurr.type != region.type ||
-        regionCurr.size.height != region.size.height || 
+        regionCurr.size.height != region.size.height ||
         regionCurr.size.width != region.size.width) {
         HAL_INFO("m6_rgn", "Parameters are different, recreating "
             "region %d...\n", handle);
@@ -496,7 +497,7 @@ void m6_region_deinit(void)
 void m6_region_destroy(char handle)
 {
     m6_sys_bind dest = { .module = M6_SYS_MOD_VENC, .port = _m6_venc_port };
-    
+
     for (char i = 0; i < M6_VENC_CHN_NUM; i++) {
         if (!m6_state[i].enable) continue;
         dest.device = _m6_venc_dev[i];
@@ -525,7 +526,7 @@ int m6_video_create(char index, hal_vidconfig *config)
     int ret;
     m6_venc_chn channel;
     m6_venc_attr_h26x *attrib;
-    
+
     if (config->codec == HAL_VIDCODEC_JPG || config->codec == HAL_VIDCODEC_MJPG) {
         _m6_venc_dev[index] = M6_VENC_DEV_MJPG_0;
         channel.attrib.codec = M6_VENC_CODEC_MJPG;
@@ -533,14 +534,14 @@ int m6_video_create(char index, hal_vidconfig *config)
             case HAL_VIDMODE_CBR:
                 channel.rate.mode = M6_VENC_RATEMODE_MJPGCBR;
                 channel.rate.mjpgCbr.bitrate = config->bitrate << 10;
-                channel.rate.mjpgCbr.fpsNum = 
+                channel.rate.mjpgCbr.fpsNum =
                     config->codec == HAL_VIDCODEC_JPG ? 1 : config->framerate;
                 channel.rate.mjpgCbr.fpsDen = 1;
                 break;
             case HAL_VIDMODE_QP:
                 channel.rate.mode = M6_VENC_RATEMODE_MJPGQP;
                 channel.rate.mjpgQp.fpsNum = config->framerate;
-                channel.rate.mjpgQp.fpsDen = 
+                channel.rate.mjpgQp.fpsDen =
                     config->codec == HAL_VIDCODEC_JPG ? 1 : config->framerate;
                 channel.rate.mjpgQp.quality = MAX(config->minQual, config->maxQual);
                 break;
@@ -565,12 +566,12 @@ int m6_video_create(char index, hal_vidconfig *config)
             case HAL_VIDMODE_CBR:
                 channel.rate.mode = M6_VENC_RATEMODE_H265CBR;
                 channel.rate.h265Cbr = (m6_venc_rate_h26xcbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate =
                     (unsigned int)(config->bitrate) << 10, .avgLvl = 1 }; break;
             case HAL_VIDMODE_VBR:
                 channel.rate.mode = M6_VENC_RATEMODE_H265VBR;
                 channel.rate.h265Vbr = (m6_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             case HAL_VIDMODE_QP:
@@ -583,12 +584,12 @@ int m6_video_create(char index, hal_vidconfig *config)
             case HAL_VIDMODE_AVBR:
                 channel.rate.mode = M6_VENC_RATEMODE_H265AVBR;
                 channel.rate.h265Avbr = (m6_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             default:
                 HAL_ERROR("m6_venc", "H.265 encoder does not support this mode!");
-        }  
+        }
     } else if (config->codec == HAL_VIDCODEC_H264) {
         channel.attrib.codec = M6_VENC_CODEC_H264;
         attrib = &channel.attrib.h264;
@@ -596,12 +597,12 @@ int m6_video_create(char index, hal_vidconfig *config)
             case HAL_VIDMODE_CBR:
                 channel.rate.mode = M6_VENC_RATEMODE_H264CBR;
                 channel.rate.h264Cbr = (m6_venc_rate_h26xcbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate =
                     (unsigned int)(config->bitrate) << 10, .avgLvl = 1 }; break;
             case HAL_VIDMODE_VBR:
                 channel.rate.mode = M6_VENC_RATEMODE_H264VBR;
                 channel.rate.h264Vbr = (m6_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             case HAL_VIDMODE_QP:
@@ -618,7 +619,7 @@ int m6_video_create(char index, hal_vidconfig *config)
             case HAL_VIDMODE_AVBR:
                 channel.rate.mode = M6_VENC_RATEMODE_H265AVBR;
                 channel.rate.h265Avbr = (m6_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             default:
@@ -639,7 +640,7 @@ attach:
     if (ret = m6_venc.fnCreateChannel(_m6_venc_dev[index], index, &channel))
         return ret;
 
-    if (config->codec != HAL_VIDCODEC_JPG && 
+    if (config->codec != HAL_VIDCODEC_JPG &&
         (ret = m6_venc.fnStartReceiving(_m6_venc_dev[index], index)))
         return ret;
 
@@ -658,7 +659,7 @@ int m6_video_destroy(char index)
     m6_venc.fnStopReceiving(_m6_venc_dev[index], index);
 
     {
-        m6_sys_bind source = { .module = M6_SYS_MOD_SCL, 
+        m6_sys_bind source = { .module = M6_SYS_MOD_SCL,
             .device = _m6_scl_dev, .channel = _m6_scl_chn, .port = index };
         m6_sys_bind dest = { .module = M6_SYS_MOD_VENC,
             .device = _m6_venc_dev[index], .channel = index, .port = _m6_venc_port };
@@ -668,12 +669,12 @@ int m6_video_destroy(char index)
 
     if (ret = m6_venc.fnDestroyChannel(_m6_venc_dev[index], index))
         return ret;
-    
+
     if (ret = m6_scl.fnDisablePort(_m6_scl_dev, _m6_scl_chn, index))
         return ret;
 
     _m6_venc_dev[index] = 255;
-    
+
     return EXIT_SUCCESS;
 }
 
@@ -685,7 +686,7 @@ int m6_video_destroy_all(void)
         if (m6_state[i].enable)
             if (ret = m6_video_destroy(i))
                 return ret;
-    
+
     return EXIT_SUCCESS;
 }
 
@@ -761,7 +762,12 @@ int m6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
 
         m6_venc_strm strm;
         memset(&strm, 0, sizeof(strm));
-        strm.packet = (m6_venc_pack*)malloc(sizeof(m6_venc_pack) * stat.curPacks);
+        m6_venc_pack packs[8];
+        if (stat.curPacks > 8)
+            strm.packet = (m6_venc_pack*)malloc(sizeof(m6_venc_pack) * stat.curPacks);
+        else
+            strm.packet = packs;
+
         if (!strm.packet) {
             HAL_DANGER("m6_venc", "Memory allocation on channel %d failed!\n", index);
             goto abort;
@@ -771,7 +777,7 @@ int m6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
         if (ret = m6_venc.fnGetStream(_m6_venc_dev[index], index, &strm, stat.curPacks)) {
             HAL_DANGER("m6_venc", "Getting the stream on "
                 "channel %d failed with %#x!\n", index, ret);
-            free(strm.packet);
+            if (stat.curPacks > 8) free(strm.packet);
             strm.packet = NULL;
             goto abort;
         }
@@ -795,6 +801,7 @@ int m6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
 
 abort:
         m6_venc.fnFreeStream(_m6_venc_dev[index], index, &strm);
+        if (stat.curPacks > 8) free(strm.packet);
     }
 
     m6_venc.fnFreeDescriptor(_m6_venc_dev[index], index);
@@ -803,7 +810,7 @@ abort:
 
     m6_channel_unbind(index);
 
-    return ret;    
+    return ret;
 }
 
 void *m6_video_thread(void)
@@ -853,7 +860,7 @@ void *m6_video_thread(void)
                 if (!m6_state[i].mainLoop) continue;
                 if (FD_ISSET(m6_state[i].fileDesc, &readFds)) {
                     memset(&stream, 0, sizeof(stream));
-                    
+
                     if (ret = m6_venc.fnQuery(_m6_venc_dev[i], i, &stat)) {
                         HAL_DANGER("m6_venc", "Querying the encoder channel "
                             "%d failed with %#x!\n", i, ret);
@@ -865,8 +872,12 @@ void *m6_video_thread(void)
                         continue;
                     }
 
-                    stream.packet = (m6_venc_pack*)malloc(
-                        sizeof(m6_venc_pack) * stat.curPacks);
+                    m6_venc_pack packs[8];
+                    if (stat.curPacks > 8)
+                        stream.packet = (m6_venc_pack*)malloc(sizeof(m6_venc_pack) * stat.curPacks);
+                    else
+                        stream.packet = packs;
+
                     if (!stream.packet) {
                         HAL_DANGER("m6_venc", "Memory allocation on channel %d failed!\n", i);
                         break;
@@ -876,6 +887,7 @@ void *m6_video_thread(void)
                     if (ret = m6_venc.fnGetStream(_m6_venc_dev[i], i, &stream, 40)) {
                         HAL_DANGER("m6_venc", "Getting the stream on "
                             "channel %d failed with %#x!\n", i, ret);
+                        if (stat.curPacks > 8) free(stream.packet);
                         break;
                     }
 
@@ -921,8 +933,7 @@ void *m6_video_thread(void)
                     if (ret = m6_venc.fnFreeStream(_m6_venc_dev[i], i, &stream))
                         HAL_WARNING("m6_venc", "Releasing the stream on "
                             "channel %d failed with %#x!\n", i, ret);
-                    free(stream.packet);
-                    stream.packet = NULL;
+                    if (stat.curPacks > 8) free(stream.packet);
                 }
             }
         }

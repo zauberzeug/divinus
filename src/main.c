@@ -34,16 +34,23 @@ void handle_exit(int signo) {
 
 int main(int argc, char *argv[]) {
     {
-        char signal_error[] = {SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV};
-        char signal_exit[] = {SIGINT, SIGQUIT, SIGTERM};
-        char signal_null[] = {EPIPE, SIGPIPE};
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = handle_error;
+        sigaction(SIGABRT, &sa, NULL);
+        sigaction(SIGBUS, &sa, NULL);
+        sigaction(SIGFPE, &sa, NULL);
+        sigaction(SIGILL, &sa, NULL);
+        sigaction(SIGSEGV, &sa, NULL);
 
-        for (char *s = signal_error; s < (&signal_error)[1]; s++)
-            signal(*s, handle_error);
-        for (char *s = signal_exit; s < (&signal_exit)[1]; s++)
-            signal(*s, handle_exit);
-        for (char *s = signal_null; s < (&signal_null)[1]; s++)
-            signal(*s, NULL);
+        sa.sa_handler = handle_exit;
+        sigaction(SIGHUP, &sa, NULL);
+        sigaction(SIGINT, &sa, NULL);
+        sigaction(SIGQUIT, &sa, NULL);
+        sigaction(SIGTERM, &sa, NULL);
+
+        sa.sa_handler = SIG_IGN;
+        sigaction(SIGPIPE, &sa, NULL);
     }
 
     hal_identify();
@@ -51,18 +58,18 @@ int main(int argc, char *argv[]) {
     if (!*family)
         HAL_ERROR("hal", "Unsupported chip family! Quitting...\n");
 
-    fprintf(stderr, "\033[7m Divinus for %s \033[0m\n", family);
+    fprintf(stderr, "\033[0m\033[7m Divinus (rev %s) for %s \033[0m\n", GIT_REV, family);
     fprintf(stderr, "Chip ID: %s\n", chip);
 
-    if (parse_app_config() != CONFIG_OK)
+    if (app_config_parse() != CONFIG_OK)
         HAL_ERROR("hal", "Can't load app config 'divinus.yaml'\n");
 
     if (app_config.watchdog)
         watchdog_start(app_config.watchdog);
 
-    start_network();
+    network_start();
 
-    start_server();
+    server_start();
 
     if (app_config.rtsp_enable) {
         rtspHandle = rtsp_create(RTSP_MAXIMUM_CONNECTIONS, app_config.rtsp_port, 1);
@@ -72,7 +79,7 @@ int main(int argc, char *argv[]) {
         else {
             HAL_INFO("rtsp", "Started listening for clients...\n");
             if (app_config.rtsp_enable_auth) {
-                if (!app_config.rtsp_auth_user || !app_config.rtsp_auth_pass)
+                if (EMPTY(app_config.rtsp_auth_user) || EMPTY(app_config.rtsp_auth_pass))
                     HAL_ERROR("rtsp", "One or both credential fields have been left empty!\n");
                 else {
                     rtsp_configure_auth(rtspHandle, app_config.rtsp_auth_user, app_config.rtsp_auth_pass);
@@ -83,19 +90,19 @@ int main(int argc, char *argv[]) {
     }
 
     if (app_config.stream_enable)
-        start_streaming();
+        media_start();
 
-    if (start_sdk())
+    if (sdk_start())
         HAL_ERROR("hal", "Failed to start SDK!\n");
 
     if (app_config.night_mode_enable)
-        enable_night();
+        night_enable();
 
     if (app_config.http_post_enable)
-        start_http_post_send();
+        http_post_start();
 
     if (app_config.osd_enable)
-        start_region_handler();
+        region_start();
 
     if (app_config.record_enable && app_config.record_continuous)
         record_start();
@@ -113,26 +120,34 @@ int main(int argc, char *argv[]) {
         HAL_INFO("rtsp", "Server has closed!\n");
     }
 
+    if (app_config.http_post_enable)
+        http_post_start();
+
     if (app_config.osd_enable)
-        stop_region_handler();
+        region_stop();
 
     if (app_config.night_mode_enable)
-        disable_night();
+        night_disable();
 
-    stop_sdk();
+    sdk_stop();
 
     if (app_config.stream_enable)
-        stop_streaming();
+        media_stop();
 
-    stop_server();
+    server_stop();
 
-    stop_network();
+    network_stop();
 
     if (app_config.watchdog)
         watchdog_stop();
 
     if (!graceful)
-        restore_app_config();
+        app_config_restore();
+
+    if (graceful) {
+        fprintf(stderr, "Restarting...\n");
+        execvp(argv[0], argv);
+    }
 
     fprintf(stderr, "Main thread is shutting down...\n");
     return EXIT_SUCCESS;

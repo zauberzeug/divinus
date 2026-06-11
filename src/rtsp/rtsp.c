@@ -1,3 +1,4 @@
+#include <stdarg.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -32,6 +33,8 @@ extern void request_idr();
 #define __STR_TEARDOWN  "TEARDOWN"
 #define __STR_TRANSPORT  "TRANSPORT"
 #define __STR_CLIENTPORT  "client_port"
+#define __STR_INTERLEAVED "interleaved"
+#define __STR_RTP_AVP_TCP "RTP/AVP/TCP"
 #define __STR_SESSION  "SESSION"
 #define __STR_PAUSE "PAUSE"
 #define __STR_RECORDING "RECORDING"
@@ -100,6 +103,7 @@ static inline bufpool_handle __connectionpool_create(int num)
         for(i = 0; i < num; i++) {
             __connection_pool[i].pool = h;
             __connection_pool[i].con_state = __CON_S_DISCONNECTED;
+            pthread_mutex_init(&__connection_pool[i].write_mutex, NULL);
         }
     }
 
@@ -129,9 +133,24 @@ static inline bufpool_handle __transpool_create(int num)
 /******************************************************************************
  *              RESPONSE IMPLEMENTATIONS
  ******************************************************************************/
+static int __rtsp_write(struct connection_item_t *p, const char *fmt, ...)
+{
+    va_list args;
+    int ret;
+
+    pthread_mutex_lock(&p->write_mutex);
+    va_start(args, fmt);
+    ret = vfprintf(p->fp_tcp_write, fmt, args);
+    va_end(args);
+    fflush(p->fp_tcp_write);
+    pthread_mutex_unlock(&p->write_mutex);
+
+    return ret;
+}
+
 static void __method_auth(struct connection_item_t *p, rtsp_handle h)
 {
-    fprintf(p->fp_tcp_write, "RTSP/1.0 401 Unauthorized\r\n"
+    __rtsp_write(p, "RTSP/1.0 401 Unauthorized\r\n"
             "CSeq: %d\r\n"
             "WWW-Authenticate: Basic realm=\"Access the camera streams\"\r\n"
             "\r\n", p->cseq);
@@ -139,7 +158,7 @@ static void __method_auth(struct connection_item_t *p, rtsp_handle h)
 
 static void __method_options(struct connection_item_t *p, rtsp_handle h)
 {
-    fprintf(p->fp_tcp_write, "RTSP/1.0 200 OK\r\n"
+    __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
             "CSeq: %d\r\n"
             "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\r\n"
             "\r\n", p->cseq);
@@ -168,15 +187,15 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
             case 96: strncpy(audioRtpfmt, "MPEG4-GENERIC", 16 - 1); break;
             default: strncpy(audioRtpfmt, "UNKNOWN", 16 - 1); break;
         }
-        sprintf(audioRtp, 
+        sprintf(audioRtp,
             "\r\n"
             "m=audio 0 RTP/AVP %d\r\n"
             "a=control:track=1\r\n"
             "a=rtpmap:%d %s/90000\r\n",
-            h->audioPt, h->audioPt, audioRtpfmt, h->audioPt);
+            h->audioPt, h->audioPt, audioRtpfmt);
     }
 
-    if (h->isH265 && 
+    if (h->isH265 &&
         h->sprop_vps_b64 && h->sprop_sps_b64 && h->sprop_sps_b16 && h->sprop_pps_b64) {
         DASSERT(h->sprop_vps_b64->result, return);
         DASSERT(h->sprop_sps_b64->result, return);
@@ -201,7 +220,7 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
                 h->sprop_sps_b64->result,
                 h->sprop_pps_b64->result,
                 audioRtp);
-    } else if (!h->isH265 && 
+    } else if (!h->isH265 &&
         h->sprop_sps_b64 && h->sprop_sps_b16 && h->sprop_pps_b64) {
         DASSERT(h->sprop_sps_b64->result, return);
         DASSERT(h->sprop_sps_b16->result, return);
@@ -214,7 +233,7 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
         snprintf(sdp, __RTSP_TCP_BUF_SIZE - 1,
                 "%sm=video 0 RTP/AVP 96\r\n"
                 "a=control:track=0\r\n"
-                "a=rtpmap:96 H265/90000\r\n"
+                "a=rtpmap:96 H264/90000\r\n"
                 "a=fmtp:96 profile-level-id=%s;"
                 " packetization-mode=1;"
                 " sprop-parameter-sets=%s,%s;%s",
@@ -234,7 +253,7 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
                 audioRtp);
     }
 
-    fprintf(p->fp_tcp_write, "RTSP/1.0 200 OK\r\n"
+    __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
             "CSeq: %d\r\n"
             "Content-Type: application/sdp\r\n"
             "Content-Length: %d\r\n"
@@ -251,60 +270,74 @@ static void __method_setup(struct connection_item_t *p, rtsp_handle h)
 	}
 
     DBG("created session id %llx\n", p->session_id);
-    p->trans[p->track_id].server_port_rtp = SERVER_RTP_PORT + p->track_id;
-    p->trans[p->track_id].server_port_rtcp = SERVER_RTCP_PORT + p->track_id;
 
-    fprintf(p->fp_tcp_write, "RTSP/1.0 200 OK\r\n"
-        "CSeq: %d\r\n"
-        "Transport: RTP/AVP/UDP;unicast;client_port=%u-%u;server_port=%u-%u\r\n"
-        "Session: %llx\r\n"
-        "\r\n", p->cseq,
-        p->trans[p->track_id].client_port_rtp,
-        p->trans[p->track_id].client_port_rtcp,
-        p->trans[p->track_id].server_port_rtp,
-        p->trans[p->track_id].server_port_rtcp,
-        p->session_id);
+    if (p->trans[p->track_id].is_tcp) {
+        __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
+            "CSeq: %d\r\n"
+            "Transport: RTP/AVP/TCP;unicast;interleaved=%u-%u\r\n"
+            "Session: %llx\r\n"
+            "\r\n", p->cseq,
+            p->trans[p->track_id].channel_rtp,
+            p->trans[p->track_id].channel_rtcp,
+            p->session_id);
+    } else {
+        p->trans[p->track_id].server_port_rtp = SERVER_RTP_PORT + p->track_id;
+        p->trans[p->track_id].server_port_rtcp = SERVER_RTCP_PORT + p->track_id;
+
+        __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
+            "CSeq: %d\r\n"
+            "Transport: RTP/AVP/UDP;unicast;client_port=%u-%u;server_port=%u-%u\r\n"
+            "Session: %llx\r\n"
+            "\r\n", p->cseq,
+            p->trans[p->track_id].client_port_rtp,
+            p->trans[p->track_id].client_port_rtcp,
+            p->trans[p->track_id].server_port_rtp,
+            p->trans[p->track_id].server_port_rtcp,
+            p->session_id);
+    }
 
     p->con_state = __CON_S_READY;
 }
 
 static void __method_pause(struct connection_item_t *p, rtsp_handle h)
 {
-    fprintf(p->fp_tcp_write, 
+    __rtsp_write(p,
         "RTSP/1.0 "__RESPONCE_STR_METHODNOTALLOWED "\r\n");
 }
 
 static void __method_record(struct connection_item_t *p, rtsp_handle h)
 {
-    fprintf(p->fp_tcp_write,
+    __rtsp_write(p,
         "RTSP/1.0 " __RESPONCE_STR_METHODNOTALLOWED "\r\n");
 }
 
 static void __method_error(struct connection_item_t *p, rtsp_handle h)
 {
-    fprintf(p->fp_tcp_write,
+    __rtsp_write(p,
         "RTSP/1.0 " __RESPONCE_STR_SERVERERROR "\r\n");
 }
 
 static void __method_play(struct connection_item_t *p, rtsp_handle h)
 {
-    fprintf(p->fp_tcp_write,
+    __rtsp_write(p,
         "RTSP/1.0 200 OK\r\n"
         "CSeq: %d\r\n"
         "Range: npt=now-\r\n"
         "\r\n" , p->cseq);
 
     for (int i = 0; i < sizeof(p->trans) / sizeof(*p->trans); i++) {
-        if (!p->trans[i].server_port_rtp) continue;
+        if (!p->trans[i].server_port_rtp && !p->trans[i].is_tcp) continue;
         p->track_id = i;
 
-        ASSERT(__bind_rtcp(p) == SUCCESS, return);
-        ASSERT(__bind_rtp(p) == SUCCESS, return);
+        if (!p->trans[i].is_tcp) {
+            ASSERT(__bind_rtcp(p) == SUCCESS, return);
+            ASSERT(__bind_rtp(p) == SUCCESS, return);
+        }
         p->trans[p->track_id].rtp_timestamp = (millis() * 90) & UINT32_MAX;
         p->trans[p->track_id].rtp_seq = rand_r(&h->ctx);
         p->trans[p->track_id].au_pending = 1;
-        p->trans[p->track_id].rtcp_octet = 0; 
-        p->trans[p->track_id].rtcp_packet_cnt = 0; 
+        p->trans[p->track_id].rtcp_octet = 0;
+        p->trans[p->track_id].rtcp_packet_cnt = 0;
         p->trans[p->track_id].rtcp_tick_org = 150; // TODO: must be variant
         p->trans[p->track_id].rtcp_tick = p->trans[p->track_id].rtcp_tick_org;
 
@@ -318,7 +351,7 @@ static void __method_play(struct connection_item_t *p, rtsp_handle h)
 
 static int __method_teardown(struct connection_item_t *p, rtsp_handle h)
 {
-    fprintf(p->fp_tcp_write,
+    __rtsp_write(p,
         "RTSP/1.0 200 OK\r\n"
         "CSeq: %d\r\n"
         "\r\n", p->cseq);
@@ -351,6 +384,26 @@ static int __message_proc_sock(struct list_t *e, void *p)
     }
 
     if (FD_ISSET(con->client_fd, &(socks->rfds))) {
+        int first_char = fgetc(con->fp_tcp_read);
+        if (first_char == '$') {
+            unsigned char head[3];
+            if (fread(head, 1, 3, con->fp_tcp_read) == 3) {
+                int len = (head[1] << 8) | head[2];
+                while (len > 0) {
+                    int r = fread(buf, 1, min(len, sizeof(buf)), con->fp_tcp_read);
+                    if (r <= 0) break;
+                    len -= r;
+                }
+                DBG("discarded interleaved packet (%d bytes)\n", (head[1] << 8) | head[2]);
+            }
+            return SUCCESS;
+        } else if (first_char != EOF) {
+            ungetc(first_char, con->fp_tcp_read);
+        } else {
+            con->con_state = __CON_S_DISCONNECTED;
+            return SUCCESS;
+        }
+
         con->parser_state = __PARSER_S_INIT;
         con->method = __METHOD_NONE;
 
@@ -378,7 +431,7 @@ static int __message_proc_sock(struct list_t *e, void *p)
                     base64_encode(valid + 6, cred, strlen(cred));
                     isAuthValid = !strncmp(buf + strlen(__STR_AUTH) + 2, valid, strlen(valid));
              } else if (SCMP(__STR_CSEQ, buf)) {
-                ASSERT(tok = strtok_r(buf, ": ", &last), goto error); 
+                ASSERT(tok = strtok_r(buf, ": ", &last), goto error);
                 ASSERT(tok = strtok_r(NULL, ": ", &last), goto error);
                 ASSERT((con->cseq = atoi(tok)) > 0, goto error);
                 con->parser_state = __PARSER_S_CSEQ;
@@ -391,15 +444,24 @@ static int __message_proc_sock(struct list_t *e, void *p)
                 con->given_session_id = session_id;
                 con->parser_state = __PARSER_S_SESSION;
             } else if (SCMP(__STR_TRANSPORT, buf)) {
+                if (strstr(buf, __STR_RTP_AVP_TCP)) {
+                    con->trans[con->track_id].is_tcp = 1;
+                }
                 for (tok = strtok_r(buf, "; ", &last); tok != NULL; tok = strtok_r(NULL, "; ", &last)) {
                     if (SCMP(__STR_CLIENTPORT, tok)) {
-                        ASSERT(sscanf(tok, __STR_CLIENTPORT "=%u-%u", 
+                        ASSERT(sscanf(tok, __STR_CLIENTPORT "=%u-%u",
                             &con->trans[con->track_id].client_port_rtp,
                             &con->trans[con->track_id].client_port_rtcp) > 0,
                                 goto error);
 
                         con->parser_state = __PARSER_S_TRANSPORT;
-                        break;
+                    } else if (SCMP(__STR_INTERLEAVED, tok)) {
+                        ASSERT(sscanf(tok, __STR_INTERLEAVED "=%hhu-%hhu",
+                            &con->trans[con->track_id].channel_rtp,
+                            &con->trans[con->track_id].channel_rtcp) > 0,
+                                goto error);
+
+                        con->parser_state = __PARSER_S_TRANSPORT;
                     }
                 }
             }
@@ -422,18 +484,19 @@ error:
                 case __METHOD_PAUSE: __method_pause(con, h); break;
                 case __METHOD_RECORDING: __method_record(con, h); break;
                 case __METHOD_TEARDOWN: __method_teardown(con, h); break;
-                case __METHOD_NONE: 
+                case __METHOD_NONE:
                     /* state DISCONNECTED connections should be garbage collected immediately.
                        but sending thread might watches the connection right now.
                        so the connection might live at here */
-                    ASSERT(con->con_state == __CON_S_DISCONNECTED, return FAILURE); 
+                    if (con->con_state != __CON_S_DISCONNECTED) {
+                        ERR("unexpected empty request, forcing disconnect\n");
+                        con->con_state = __CON_S_DISCONNECTED;
+                    }
                     break;
                 default: ERR("unexpected method state\n"); return FAILURE;
             }
         }
-
-        fflush(con->fp_tcp_write);
-    } 
+    }
     return SUCCESS;
 }
 
@@ -473,7 +536,13 @@ static int __connection_reset(void *v)
     p->given_session_id = 0;
     p->cseq = 0;
 
-    ctx = p->trans[0].rtp_timestamp;
+    /* mix in the clock: a client that left before PLAY would leave a zero
+       timestamp and degenerate the session id to the unset sentinel */
+    ctx = p->trans[0].rtp_timestamp ^ (unsigned)millis();
+
+    /* pooled slots are reused: transport state (is_tcp, ports, channels,
+       sequence/timestamp) must not leak into the slot's next client */
+    memset(p->trans, 0, sizeof(p->trans));
 
     /* randomize session id to avoid conflict */
     p->session_id = __get_random_llu(&ctx);
@@ -590,7 +659,7 @@ static inline int __bind_rtp(struct connection_item_t *con )
     addr.sin_port = htons(con->trans[con->track_id].server_port_rtp);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_family = AF_INET;
-    
+
     tmp = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
 
@@ -742,19 +811,19 @@ static void *rtspThrFxn(void *v)
             /* lock while tcp layer is done */
             rtsp_lock(rh);
 
-            ASSERT(__accept_proc_sock(rh, server_fd, &socks) == SUCCESS, 
+            ASSERT(__accept_proc_sock(rh, server_fd, &socks) == SUCCESS,
                     ({ rtsp_unlock(rh); goto error;}));
 
-            ASSERT(list_map_inline(&rh->con_list, __message_proc_sock, &socks) == SUCCESS, 
+            ASSERT(list_map_inline(&rh->con_list, __message_proc_sock, &socks) == SUCCESS,
                     ({ rtsp_unlock(rh); goto error;}));
 
-            MUST(list_sweep(&rh->con_list, __connection_is_dead) == SUCCESS, 
+            MUST(list_sweep(&rh->con_list, __connection_is_dead) == SUCCESS,
                     ({ rtsp_unlock(rh); goto error;}));
 
             socks.nfds = max(server_fd, __find_fd_max(&rh->con_list)) + 1;
 
             rtsp_unlock(rh);
-        } 
+        }
         //bufpool_statistics(rh->con_pool);
     }
 
@@ -834,7 +903,7 @@ rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int priority)
 
     return nh;
 
-error: 
+error:
     rtsp_finish(nh);
     return NULL;
 }

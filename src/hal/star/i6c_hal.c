@@ -114,7 +114,7 @@ int i6c_audio_init(int samplerate, int gain)
         return ret;
 
     {
-        i6c_sys_bind bind = { .module = I6C_SYS_MOD_AI, 
+        i6c_sys_bind bind = { .module = I6C_SYS_MOD_AI,
             .device = _i6c_aud_dev, .channel = _i6c_aud_chn };
         if (ret = i6c_sys.fnSetOutputDepth(0, &bind, 3, 5))
             return ret;
@@ -131,7 +131,7 @@ void *i6c_audio_thread(void)
     memset(&frame, 0, sizeof(frame));
 
     while (keepRunning && audioOn) {
-        if (ret = i6c_aud.fnGetFrame(_i6c_aud_dev, _i6c_aud_chn, 
+        if (ret = i6c_aud.fnGetFrame(_i6c_aud_dev, _i6c_aud_chn,
             &frame, NULL, 128)) {
             HAL_WARNING("i6c_aud", "Getting the frame failed "
                 "with %#x!\n", ret);
@@ -165,7 +165,7 @@ int i6c_channel_bind(char index, char framerate)
         return ret;
 
     {
-        i6c_sys_bind source = { .module = I6C_SYS_MOD_SCL, 
+        i6c_sys_bind source = { .module = I6C_SYS_MOD_SCL,
             .device = _i6c_scl_dev, .channel = _i6c_scl_chn, .port = index };
         i6c_sys_bind dest = { .module = I6C_SYS_MOD_VENC,
             .device = _i6c_venc_dev[index],
@@ -209,7 +209,7 @@ int i6c_channel_unbind(char index)
         return ret;
 
     {
-        i6c_sys_bind source = { .module = I6C_SYS_MOD_SCL, 
+        i6c_sys_bind source = { .module = I6C_SYS_MOD_SCL,
             .device = _i6c_scl_dev, .channel = _i6c_scl_chn, .port = index };
         i6c_sys_bind dest = { .module = I6C_SYS_MOD_VENC,
             .device = _i6c_venc_dev[index], .channel = index, .port = _i6c_venc_port };
@@ -227,11 +227,11 @@ int i6c_config_load(char *path)
 
 extern int _i6_level3dnr;
 
-int i6c_pipeline_create(char sensor, short width, short height, char mirror, char flip, char framerate)
+int i6c_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate)
 {
     int ret;
 
-    _i6c_snr_index = sensor;
+    _i6c_snr_index = index;
     _i6c_snr_profile = -1;
 
     {
@@ -250,7 +250,7 @@ int i6c_pipeline_create(char sensor, short width, short height, char mirror, cha
                 height > resolution.crop.height ||
                 framerate > resolution.maxFps)
                 continue;
-        
+
             _i6c_snr_profile = i;
             if (ret = i6c_snr.fnSetResolution(_i6c_snr_index, _i6c_snr_profile))
                 return ret;
@@ -270,6 +270,7 @@ int i6c_pipeline_create(char sensor, short width, short height, char mirror, cha
         return ret;
     if (ret = i6c_snr.fnGetPlaneInfo(_i6c_snr_index, 0, &_i6c_snr_plane))
         return ret;
+    strncpy(sensor, _i6c_snr_plane.sensName, sizeof(sensor) - 1);
 
     i6c_sys_pool pool;
     memset(&pool, 0, sizeof(pool));
@@ -298,10 +299,10 @@ int i6c_pipeline_create(char sensor, short width, short height, char mirror, cha
         if (ret = i6c_vif.fnCreateGroup(_i6c_vif_grp, &group))
             return ret;
     }
-    
+
     {
         i6c_vif_dev device;
-        device.pixFmt = (i6c_common_pixfmt)(_i6c_snr_plane.bayer > I6C_BAYER_END ? 
+        device.pixFmt = (i6c_common_pixfmt)(_i6c_snr_plane.bayer > I6C_BAYER_END ?
             _i6c_snr_plane.pixFmt : (I6C_PIXFMT_RGB_BAYER + _i6c_snr_plane.precision * I6C_BAYER_END + _i6c_snr_plane.bayer));
         device.crop = _i6c_snr_plane.capt;
         device.field = 0;
@@ -311,13 +312,13 @@ int i6c_pipeline_create(char sensor, short width, short height, char mirror, cha
     }
     if (ret = i6c_vif.fnEnableDevice(_i6c_vif_dev))
         return ret;
-    
+
     {
         i6c_vif_port port;
         port.capt = _i6c_snr_plane.capt;
         port.dest.height = _i6c_snr_plane.capt.height;
         port.dest.width = _i6c_snr_plane.capt.width;
-        port.pixFmt = (i6c_common_pixfmt)(_i6c_snr_plane.bayer > I6C_BAYER_END ? 
+        port.pixFmt = (i6c_common_pixfmt)(_i6c_snr_plane.bayer > I6C_BAYER_END ?
             _i6c_snr_plane.pixFmt : (I6C_PIXFMT_RGB_BAYER + _i6c_snr_plane.precision * I6C_BAYER_END + _i6c_snr_plane.bayer));
         port.frate = I6C_VIF_FRATE_FULL;
         port.compress = I6C_COMPR_NONE;
@@ -386,7 +387,7 @@ int i6c_pipeline_create(char sensor, short width, short height, char mirror, cha
         return ret;
 
     {
-        i6c_sys_bind source = { .module = I6C_SYS_MOD_VIF, 
+        i6c_sys_bind source = { .module = I6C_SYS_MOD_VIF,
             .device = _i6c_vif_dev, .channel = _i6c_vif_chn, .port = 0 };
         i6c_sys_bind dest = { .module = I6C_SYS_MOD_ISP,
             .device = _i6c_isp_dev, .channel = _i6c_isp_chn, .port = _i6c_isp_port };
@@ -396,7 +397,7 @@ int i6c_pipeline_create(char sensor, short width, short height, char mirror, cha
     }
 
     {
-        i6c_sys_bind source = { .module = I6C_SYS_MOD_ISP, 
+        i6c_sys_bind source = { .module = I6C_SYS_MOD_ISP,
             .device = _i6c_isp_dev, .channel = _i6c_isp_chn, .port = _i6c_isp_port };
         i6c_sys_bind dest = { .module = I6C_SYS_MOD_SCL,
             .device = _i6c_scl_dev, .channel = _i6c_scl_chn, .port = 0 };
@@ -413,7 +414,7 @@ void i6c_pipeline_destroy(void)
         i6c_scl.fnDisablePort(_i6c_scl_dev, _i6c_scl_chn, i);
 
     {
-        i6c_sys_bind source = { .module = I6C_SYS_MOD_ISP, 
+        i6c_sys_bind source = { .module = I6C_SYS_MOD_ISP,
             .device = _i6c_isp_dev, .channel = _i6c_isp_chn, .port = _i6c_isp_port };
         i6c_sys_bind dest = { .module = I6C_SYS_MOD_SCL,
             .device = _i6c_scl_dev, .channel = _i6c_scl_chn, .port = 0 };
@@ -430,8 +431,8 @@ void i6c_pipeline_destroy(void)
 
     i6c_isp.fnDestroyDevice(_i6c_isp_dev);
 
-    {   
-        i6c_sys_bind source = { .module = I6C_SYS_MOD_VIF, 
+    {
+        i6c_sys_bind source = { .module = I6C_SYS_MOD_VIF,
             .device = _i6c_vif_dev, .channel = _i6c_vif_chn, .port = 0 };
         i6c_sys_bind dest = { .module = I6C_SYS_MOD_ISP,
             .device = _i6c_isp_dev, .channel = _i6c_isp_chn, .port = _i6c_isp_port };
@@ -463,7 +464,7 @@ int i6c_region_create(char handle, hal_rect rect, short opacity)
         if (ret = i6c_rgn.fnCreateRegion(0, handle, &region))
             return ret;
     } else if (regionCurr.type != region.type ||
-        regionCurr.size.height != region.size.height || 
+        regionCurr.size.height != region.size.height ||
         regionCurr.size.width != region.size.width) {
         HAL_INFO("i6c_rgn", "Parameters are different, recreating "
             "region %d...\n", handle);
@@ -548,7 +549,7 @@ int i6c_video_create(char index, hal_vidconfig *config)
     int ret;
     i6c_venc_chn channel;
     i6c_venc_attr_h26x *attrib;
-    
+
     if (config->codec == HAL_VIDCODEC_JPG || config->codec == HAL_VIDCODEC_MJPG) {
         _i6c_venc_dev[index] = I6C_VENC_DEV_MJPG_0;
         channel.attrib.codec = I6C_VENC_CODEC_MJPG;
@@ -557,7 +558,7 @@ int i6c_video_create(char index, hal_vidconfig *config)
                 channel.rate.mode = i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_MJPGCBR : I6C_VENC_RATEMODE_MJPGCBR;
                 channel.rate.mjpgCbr.bitrate = config->bitrate << 10;
-                channel.rate.mjpgCbr.fpsNum = 
+                channel.rate.mjpgCbr.fpsNum =
                     config->codec == HAL_VIDCODEC_JPG ? 1 : config->framerate;
                 channel.rate.mjpgCbr.fpsDen = 1;
                 break;
@@ -565,7 +566,7 @@ int i6c_video_create(char index, hal_vidconfig *config)
                 channel.rate.mode = i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_MJPGQP : I6C_VENC_RATEMODE_MJPGQP;
                 channel.rate.mjpgQp.fpsNum = config->framerate;
-                channel.rate.mjpgQp.fpsDen = 
+                channel.rate.mjpgQp.fpsDen =
                     config->codec == HAL_VIDCODEC_JPG ? 1 : config->framerate;
                 channel.rate.mjpgQp.quality = MAX(config->minQual, config->maxQual);
                 break;
@@ -591,13 +592,13 @@ int i6c_video_create(char index, hal_vidconfig *config)
                 channel.rate.mode = i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_H265CBR : I6C_VENC_RATEMODE_H265CBR;
                 channel.rate.h265Cbr = (i6c_venc_rate_h26xcbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate =
                     (unsigned int)(config->bitrate) << 10, .avgLvl = 1 }; break;
             case HAL_VIDMODE_VBR:
                 channel.rate.mode = i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_H265VBR : I6C_VENC_RATEMODE_H265VBR;
                 channel.rate.h265Vbr = (i6c_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             case HAL_VIDMODE_QP:
@@ -612,12 +613,12 @@ int i6c_video_create(char index, hal_vidconfig *config)
                 channel.rate.mode = i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_H265AVBR : I6C_VENC_RATEMODE_H265AVBR;
                 channel.rate.h265Avbr = (i6c_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             default:
                 HAL_ERROR("i6c_venc", "H.265 encoder does not support this mode!");
-        }  
+        }
     } else if (config->codec == HAL_VIDCODEC_H264) {
         channel.attrib.codec = I6C_VENC_CODEC_H264;
         attrib = &channel.attrib.h264;
@@ -626,13 +627,13 @@ int i6c_video_create(char index, hal_vidconfig *config)
                 channel.rate.mode =  i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_H264CBR : I6C_VENC_RATEMODE_H264CBR;
                 channel.rate.h264Cbr = (i6c_venc_rate_h26xcbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .bitrate =
                     (unsigned int)(config->bitrate) << 10, .avgLvl = 1 }; break;
             case HAL_VIDMODE_VBR:
                 channel.rate.mode = i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_H264VBR : I6C_VENC_RATEMODE_H264VBR;
                 channel.rate.h264Vbr = (i6c_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             case HAL_VIDMODE_QP:
@@ -652,7 +653,7 @@ int i6c_video_create(char index, hal_vidconfig *config)
                 channel.rate.mode = i6c_ubrmode ?
                     I6C_VENC_RATEMODE_UBR_H264AVBR : I6C_VENC_RATEMODE_H264AVBR;
                 channel.rate.h264Avbr = (i6c_venc_rate_h26xvbr){ .gop = config->gop,
-                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate = 
+                    .statTime = 1, .fpsNum = config->framerate, .fpsDen = 1, .maxBitrate =
                     (unsigned int)(MAX(config->bitrate, config->maxBitrate)) << 10,
                     .maxQual = config->maxQual, .minQual = config->minQual }; break;
             default:
@@ -692,7 +693,7 @@ attach:
             return ret;
     }
 
-    if (config->codec != HAL_VIDCODEC_JPG && 
+    if (config->codec != HAL_VIDCODEC_JPG &&
         (ret = i6c_venc.fnStartReceiving(_i6c_venc_dev[index], index)))
         return ret;
 
@@ -711,7 +712,7 @@ int i6c_video_destroy(char index)
     i6c_venc.fnStopReceiving(_i6c_venc_dev[index], index);
 
     {
-        i6c_sys_bind source = { .module = I6C_SYS_MOD_SCL, 
+        i6c_sys_bind source = { .module = I6C_SYS_MOD_SCL,
             .device = _i6c_scl_dev, .channel = _i6c_scl_chn, .port = index };
         i6c_sys_bind dest = { .module = I6C_SYS_MOD_VENC,
             .device = _i6c_venc_dev[index], .channel = index, .port = _i6c_venc_port };
@@ -721,12 +722,12 @@ int i6c_video_destroy(char index)
 
     if (ret = i6c_venc.fnDestroyChannel(_i6c_venc_dev[index], index))
         return ret;
-    
+
     if (ret = i6c_scl.fnDisablePort(_i6c_scl_dev, _i6c_scl_chn, index))
         return ret;
 
     _i6c_venc_dev[index] = 255;
-    
+
     return EXIT_SUCCESS;
 }
 
@@ -812,7 +813,12 @@ int i6c_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
 
         i6c_venc_strm strm;
         memset(&strm, 0, sizeof(strm));
-        strm.packet = (i6c_venc_pack*)malloc(sizeof(i6c_venc_pack) * stat.curPacks);
+        i6c_venc_pack packs[8];
+        if (stat.curPacks > 8)
+            strm.packet = (i6c_venc_pack*)malloc(sizeof(i6c_venc_pack) * stat.curPacks);
+        else
+            strm.packet = packs;
+
         if (!strm.packet) {
             HAL_DANGER("i6c_venc", "Memory allocation on channel %d failed!\n", index);
             goto abort;
@@ -822,7 +828,7 @@ int i6c_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
         if (ret = i6c_venc.fnGetStream(_i6c_venc_dev[index], index, &strm, stat.curPacks)) {
             HAL_DANGER("i6c_venc", "Getting the stream on "
                 "channel %d failed with %#x!\n", index, ret);
-            free(strm.packet);
+            if (stat.curPacks > 8) free(strm.packet);
             strm.packet = NULL;
             goto abort;
         }
@@ -846,6 +852,7 @@ int i6c_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
 
 abort:
         i6c_venc.fnFreeStream(_i6c_venc_dev[index], index, &strm);
+        if (stat.curPacks > 8) free(strm.packet);
     }
 
     i6c_venc.fnFreeDescriptor(_i6c_venc_dev[index], index);
@@ -871,7 +878,7 @@ void *i6c_video_thread(void)
             return (void*)0;
         }
         i6c_state[i].fileDesc = ret;
-    
+
         if (maxFd <= i6c_state[i].fileDesc)
             maxFd = i6c_state[i].fileDesc;
     }
@@ -904,7 +911,7 @@ void *i6c_video_thread(void)
                 if (!i6c_state[i].mainLoop) continue;
                 if (FD_ISSET(i6c_state[i].fileDesc, &readFds)) {
                     memset(&stream, 0, sizeof(stream));
-                    
+
                     if (ret = i6c_venc.fnQuery(_i6c_venc_dev[i], i, &stat)) {
                         HAL_DANGER("i6c_venc", "Querying the encoder channel "
                             "%d failed with %#x!\n", i, ret);
@@ -916,8 +923,12 @@ void *i6c_video_thread(void)
                         continue;
                     }
 
-                    stream.packet = (i6c_venc_pack*)malloc(
-                        sizeof(i6c_venc_pack) * stat.curPacks);
+                    i6c_venc_pack packs[8];
+                    if (stat.curPacks > 8)
+                        stream.packet = (i6c_venc_pack*)malloc(sizeof(i6c_venc_pack) * stat.curPacks);
+                    else
+                        stream.packet = packs;
+
                     if (!stream.packet) {
                         HAL_DANGER("i6c_venc", "Memory allocation on channel %d failed!\n", i);
                         break;
@@ -927,6 +938,7 @@ void *i6c_video_thread(void)
                     if (ret = i6c_venc.fnGetStream(_i6c_venc_dev[i], i, &stream, 40)) {
                         HAL_DANGER("i6c_venc", "Getting the stream on "
                             "channel %d failed with %#x!\n", i, ret);
+                        if (stat.curPacks > 8) free(stream.packet);
                         break;
                     }
 
@@ -973,8 +985,7 @@ void *i6c_video_thread(void)
                         HAL_DANGER("i6c_venc", "Releasing the stream on "
                             "channel %d failed with %#x!\n", i, ret);
                     }
-                    free(stream.packet);
-                    stream.packet = NULL;
+                    if (stat.curPacks > 8) free(stream.packet);
                 }
             }
         }

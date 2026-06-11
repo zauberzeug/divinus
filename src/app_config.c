@@ -4,7 +4,7 @@ const char *appconf_paths[] = {"./divinus.yaml", "/etc/divinus.yaml"};
 
 struct AppConfig app_config;
 
-static inline void open_app_config(FILE **file, const char *flags) {
+static inline void app_config_open(FILE **file, const char *flags) {
     const char **path = appconf_paths;
     char conf_path[PATH_MAX], exe_path[PATH_MAX];
     *file = NULL;
@@ -39,7 +39,7 @@ static inline void open_app_config(FILE **file, const char *flags) {
     }
 }
 
-void restore_app_config(void) {
+void app_config_restore(void) {
     char conf_path[PATH_MAX], exe_path[PATH_MAX];
 
     ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
@@ -67,10 +67,10 @@ void restore_app_config(void) {
     }
 }
 
-int save_app_config(void) {
+int app_config_save(void) {
     FILE *file;
 
-    open_app_config(&file, "w");
+    app_config_open(&file, "w");
     if (!file)
         HAL_ERROR("app_config", "Can't open config file for writing\n");
 
@@ -170,7 +170,7 @@ int save_app_config(void) {
         char imgEmpty = EMPTY(osds[i].img);
         char textEmpty = EMPTY(osds[i].text);
         if (imgEmpty && textEmpty) continue;
-    
+
         if (!imgEmpty)
             fprintf(file, "    reg%d_img: %s\n", i, osds[i].img);
         if (!textEmpty)
@@ -198,6 +198,7 @@ int save_app_config(void) {
     fprintf(file, "  height: %d\n", app_config.mjpeg_height);
     fprintf(file, "  fps: %d\n", app_config.mjpeg_fps);
     fprintf(file, "  bitrate: %d\n", app_config.mjpeg_bitrate);
+    fprintf(file, "  qfactor: %d\n", app_config.mjpeg_qfactor);
 
     fprintf(file, "http_post:\n");
     fprintf(file, "  enable: %s\n", app_config.http_post_enable ? "true" : "false");
@@ -214,7 +215,7 @@ int save_app_config(void) {
     return EXIT_SUCCESS;
 }
 
-enum ConfigError parse_app_config(void) {
+enum ConfigError app_config_parse(void) {
     memset(&app_config, 0, sizeof(struct AppConfig));
 
     app_config.web_port = 8080;
@@ -265,6 +266,7 @@ enum ConfigError parse_app_config(void) {
     app_config.mjpeg_width = 640;
     app_config.mjpeg_height = 480;
     app_config.mjpeg_bitrate = 1024;
+    app_config.mjpeg_qfactor = 0;
 
     app_config.mirror = false;
     app_config.flip = false;
@@ -285,7 +287,7 @@ enum ConfigError parse_app_config(void) {
     memset(&ini, 0, sizeof(struct IniConfig));
 
     FILE *file;
-    open_app_config(&file, "r");
+    app_config_open(&file, "r");
     if (!open_config(&ini, &file))  {
         printf("Can't find config divinus.yaml in:\n"
             "    ./divinus.yaml\n    /etc/divinus.yaml\n");
@@ -359,7 +361,7 @@ enum ConfigError parse_app_config(void) {
             &app_config.ir_cut_pin2);
         parse_int(
             &ini, "night_mode", "ir_led_pin", 0, PIN_MAX,
-            &app_config.ir_led_pin);            
+            &app_config.ir_led_pin);
         parse_int(
             &ini, "night_mode", "pin_switch_delay_us", 0, 1000,
             &app_config.pin_switch_delay_us);
@@ -447,24 +449,20 @@ enum ConfigError parse_app_config(void) {
     parse_bool(&ini, "stream", "enable", &app_config.stream_enable);
     if (app_config.stream_enable) {
         int count, val;
-        parse_int(&ini, "stream", "udp_srcport", 0, USHRT_MAX, &val);
-        if (err != CONFIG_OK) app_config.stream_udp_srcport = (unsigned short)val;
-        err = parse_list(&ini, "stream", "dest",
+        err = parse_int(&ini, "stream", "udp_srcport", 0, USHRT_MAX, &val);
+        if (err == CONFIG_OK) app_config.stream_udp_srcport = (unsigned short)val;
+        parse_list(&ini, "stream", "dest",
             sizeof(app_config.stream_dests) / sizeof(*app_config.stream_dests),
             &count, app_config.stream_dests);
         *app_config.stream_dests[count] = '\0';
-        if (err != CONFIG_OK)
-            goto RET_ERR;
     }
 
     parse_bool(&ini, "audio", "enable", &app_config.audio_enable);
     if (app_config.audio_enable) {
         parse_int(&ini, "audio", "bitrate", 32, 320, &app_config.audio_bitrate);
         parse_int(&ini, "audio", "gain", -60, 30, &app_config.audio_gain);
-        err = parse_int(&ini, "audio", "srate", 8000, 96000, 
+        parse_int(&ini, "audio", "srate", 8000, 96000,
             &app_config.audio_srate);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
     }
 
     parse_bool(&ini, "mp4", "enable", &app_config.mp4_enable);
@@ -567,6 +565,7 @@ enum ConfigError parse_app_config(void) {
             &ini, "mjpeg", "bitrate", 32, INT_MAX, &app_config.mjpeg_bitrate);
         if (err != CONFIG_OK)
             goto RET_ERR;
+        parse_int(&ini, "mjpeg", "qfactor", 0, 99, &app_config.mjpeg_qfactor);
     }
 
     parse_bool(&ini, "http_post", "enable", &app_config.http_post_enable);

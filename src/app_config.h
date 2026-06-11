@@ -106,6 +106,7 @@ struct AppConfig {
     unsigned int mjpeg_width;
     unsigned int mjpeg_height;
     unsigned int mjpeg_bitrate;
+    unsigned int mjpeg_qfactor;
 
     // [http_post]
     bool http_post_enable;
@@ -120,6 +121,6 @@ struct AppConfig {
 };
 
 extern struct AppConfig app_config;
-enum ConfigError parse_app_config(void);
-void restore_app_config(void);
-int save_app_config(void);
+enum ConfigError app_config_parse(void);
+void app_config_restore(void);
+int app_config_save(void);
