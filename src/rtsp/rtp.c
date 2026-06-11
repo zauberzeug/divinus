@@ -440,12 +440,24 @@ int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265)
     
     if (trans.list_head.list) {
         for (int i = 0; i < stream->count; i++) {
-            ASSERT(__transfer_nal_h26x(&(trans.list_head), 
-                stream->pack[i].data + stream->pack[i].offset, 
-                stream->pack[i].length - stream->pack[i].offset, h->isH265) == SUCCESS, goto error);
+            unsigned char *buf = stream->pack[i].data + stream->pack[i].offset;
+            size_t len = stream->pack[i].length - stream->pack[i].offset;
+            unsigned char *nalptr = buf;
+            size_t single_len = 0;
+
+            /* RFC 6184/7798 payloads must not carry Annex-B start codes:
+               split multi-NAL packs and strip the 00 00 00 01 prefixes */
+            if (len >= 4 && !buf[0] && !buf[1] && !buf[2] && buf[3] == 1) {
+                while (__split_nal(buf, &nalptr, &single_len, len) == SUCCESS)
+                    ASSERT(__transfer_nal_h26x(&(trans.list_head),
+                        nalptr, single_len, h->isH265) == SUCCESS, goto error);
+            } else {
+                ASSERT(__transfer_nal_h26x(&(trans.list_head),
+                    buf, len, h->isH265) == SUCCESS, goto error);
+            }
         }
         ASSERT(list_map_inline(&(trans.list_head), (__rtcp_poll), &track_id) == SUCCESS, goto error);
-    } 
+    }
 
     ret = SUCCESS;
 
