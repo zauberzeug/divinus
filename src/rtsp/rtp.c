@@ -186,12 +186,16 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
         head[2] = (rtp->rtpsize >> 8) & 0xFF;
         head[3] = rtp->rtpsize & 0xFF;
 
+        /* a stalled client must not hold write_mutex forever: the venc
+           callback serves every connection through this path */
+        int spins = 0;
         pthread_mutex_lock(&con->write_mutex);
         int sent_h = 0;
         while (sent_h < 4) {
             int r = send(con->client_fd, head + sent_h, 4 - sent_h, 0);
             if (r > 0) sent_h += r;
-            else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) usleep(1000);
+            else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+                ++spins <= 100) usleep(1000);
             else { sent_h = -1; break; }
         }
         if (sent_h == 4) {
@@ -199,7 +203,8 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
             while (sent_b < rtp->rtpsize) {
                 int r = send(con->client_fd, (char*)&(rtp->packet) + sent_b, rtp->rtpsize - sent_b, 0);
                 if (r > 0) sent_b += r;
-                else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) usleep(1000);
+                else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+                    ++spins <= 100) usleep(1000);
                 else { sent_b = -1; break; }
             }
             send_bytes = sent_b;

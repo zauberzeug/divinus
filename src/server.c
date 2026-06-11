@@ -99,6 +99,7 @@ int send_to_fd(int fd, char *buf, ssize_t size) {
         ssize_t n = send(fd, buf + sent, size - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
         if (n > 0) {
             sent += n;
+            tries = 0;
             continue;
         }
         if (n < 0 && errno == EINTR)
@@ -122,10 +123,10 @@ int sendv_to_client(int i, struct iovec *iov, int iovcnt) {
 
     while (iovcnt > 0) {
         ssize_t n = writev(fd, iov, iovcnt);
-        if (n < 0) {
-            if (errno == EINTR)
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR)
                 continue;
-            if ((errno == EAGAIN || errno == EWOULDBLOCK) &&
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
                 tries++ < HTTP_SEND_POLL_TRIES) {
                 struct pollfd pfd = {.fd = fd, .events = POLLOUT};
                 if (poll(&pfd, 1, HTTP_SEND_POLL_MS) > 0)
@@ -134,6 +135,7 @@ int sendv_to_client(int i, struct iovec *iov, int iovcnt) {
             free_client(i);
             return -1;
         }
+        tries = 0;
         while (iovcnt > 0 && n >= (ssize_t)iov->iov_len) {
             n -= iov->iov_len;
             iov++;
@@ -470,7 +472,7 @@ int send_file(const int client_fd, const char *path) {
             if (send_to_fd(client_fd, buf, size) < 0) break;
         }
         char end[] = "0\r\n\r\n";
-        send_to_fd(client_fd, end, sizeof(end));
+        send_to_fd(client_fd, end, sizeof(end) - 1);
         fclose(file);
         close_socket_fd(client_fd);
         return EXIT_FAILURE;

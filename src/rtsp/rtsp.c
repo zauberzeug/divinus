@@ -536,7 +536,9 @@ static int __connection_reset(void *v)
     p->given_session_id = 0;
     p->cseq = 0;
 
-    ctx = p->trans[0].rtp_timestamp;
+    /* mix in the clock: a client that left before PLAY would leave a zero
+       timestamp and degenerate the session id to the unset sentinel */
+    ctx = p->trans[0].rtp_timestamp ^ (unsigned)millis();
 
     /* pooled slots are reused: transport state (is_tcp, ports, channels,
        sequence/timestamp) must not leak into the slot's next client */

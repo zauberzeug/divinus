@@ -51,12 +51,16 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
         head[2] = 0;
         head[3] = 36;
 
+        /* a stalled client must not hold write_mutex forever: the venc
+           callback serves every connection through this path */
+        int spins = 0;
         pthread_mutex_lock(&con->write_mutex);
         int sent_h = 0;
         while (sent_h < 4) {
             int r = send(con->client_fd, head + sent_h, 4 - sent_h, 0);
             if (r > 0) sent_h += r;
-            else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) usleep(1000);
+            else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+                ++spins <= 100) usleep(1000);
             else { sent_h = -1; break; }
         }
         if (sent_h == 4) {
@@ -64,7 +68,8 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
             while (sent_b < 36) {
                 int r = send(con->client_fd, (char*)&(rtcp) + sent_b, 36 - sent_b, 0);
                 if (r > 0) sent_b += r;
-                else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) usleep(1000);
+                else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+                    ++spins <= 100) usleep(1000);
                 else { sent_b = -1; break; }
             }
             send_bytes = sent_b;
