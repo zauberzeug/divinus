@@ -3,6 +3,8 @@
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
 #define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
+#define HTTP_SEND_POLL_MS 25
+#define HTTP_SEND_POLL_TRIES 4
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -85,24 +87,64 @@ void free_client(int i) {
     client_fds[i].sockFd = -1;
 }
 
+/* Streams framed by Content-Length or chunk headers break irrecoverably on
+   a short write, so never return success before the full buffer is out:
+   wait briefly for slow receivers, fail those that cannot keep up */
 int send_to_fd(int fd, char *buf, ssize_t size) {
+    ssize_t sent = 0;
+    int tries = 0;
     if (fd < 0) return -1;
-    ssize_t sent = send(fd, buf, size, MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (sent < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+
+    while (sent < size) {
+        ssize_t n = send(fd, buf + sent, size - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (n > 0) {
+            sent += n;
+            continue;
+        }
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+            tries++ < HTTP_SEND_POLL_TRIES) {
+            struct pollfd pfd = {.fd = fd, .events = POLLOUT};
+            if (poll(&pfd, 1, HTTP_SEND_POLL_MS) > 0)
+                continue;
+        }
         return -1;
     }
+
     return EXIT_SUCCESS;
 }
 
 int sendv_to_client(int i, struct iovec *iov, int iovcnt) {
-    ssize_t n = writev(client_fds[i].sockFd, iov, iovcnt);
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-        if (errno == EINTR) return 0;
-        free_client(i);
-        return -1;
+    int fd = client_fds[i].sockFd;
+    int tries = 0;
+    if (fd < 0) return -1;
+
+    while (iovcnt > 0) {
+        ssize_t n = writev(fd, iov, iovcnt);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) &&
+                tries++ < HTTP_SEND_POLL_TRIES) {
+                struct pollfd pfd = {.fd = fd, .events = POLLOUT};
+                if (poll(&pfd, 1, HTTP_SEND_POLL_MS) > 0)
+                    continue;
+            }
+            free_client(i);
+            return -1;
+        }
+        while (iovcnt > 0 && n >= (ssize_t)iov->iov_len) {
+            n -= iov->iov_len;
+            iov++;
+            iovcnt--;
+        }
+        if (iovcnt > 0) {
+            iov->iov_base = (char *)iov->iov_base + n;
+            iov->iov_len -= n;
+        }
     }
+
     return 0;
 }
 
@@ -424,8 +466,8 @@ int send_file(const int client_fd, const char *path) {
             len_size = sprintf(len_buf, "%zX\r\n", size);
             buf[size++] = '\r';
             buf[size++] = '\n';
-            send_to_fd(client_fd, len_buf, len_size); // send <SIZE>\r\n
-            send_to_fd(client_fd, buf, size);         // send <DATA>\r\n
+            if (send_to_fd(client_fd, len_buf, len_size) < 0) break;
+            if (send_to_fd(client_fd, buf, size) < 0) break;
         }
         char end[] = "0\r\n\r\n";
         send_to_fd(client_fd, end, sizeof(end));
