@@ -303,12 +303,37 @@ void send_pcm_to_client(hal_audframe *frame) {
     pthread_mutex_unlock(&client_fds_mutex);
 }
 
-void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
-    static char prefix_buf[128];
+void send_mjpeg_to_client(char index, char *buf, ssize_t size, unsigned long long timestamp) {
+    static char prefix_buf[160];
+    unsigned long long wallUs;
+
+    /* Rebase the vendor capture clock onto the NTP-disciplined wall clock by
+       pairing CLOCK_MONOTONIC and CLOCK_REALTIME per frame (same method as
+       the RTSP sender report path). The vendor clock tracks CLOCK_MONOTONIC
+       with a constant per-SoC offset, and the SDK stamps at encoder output
+       rather than sensor latch; both are constant per configuration and are
+       not subtracted here. Falls back to send-time stamping when the vendor
+       timestamp is unusable. */
+    {
+        struct timespec mono, real;
+        unsigned long long monoUs = 0, realUs = 0;
+        if (!clock_gettime(CLOCK_MONOTONIC, &mono) &&
+            !clock_gettime(CLOCK_REALTIME, &real)) {
+            monoUs = (unsigned long long)mono.tv_sec * 1000000ULL + mono.tv_nsec / 1000ULL;
+            realUs = (unsigned long long)real.tv_sec * 1000000ULL + real.tv_nsec / 1000ULL;
+        }
+        if (timestamp && timestamp <= monoUs)
+            wallUs = realUs - (monoUs - timestamp);
+        else
+            wallUs = realUs;
+    }
+
     ssize_t prefix_size = sprintf(prefix_buf,
         "--boundarydonotcross\r\n"
         "Content-Type:image/jpeg\r\n"
-        "Content-Length: %lu\r\n\r\n", size);
+        "Content-Length: %lu\r\n"
+        "X-Timestamp: %llu.%06llu\r\n\r\n", size,
+        wallUs / 1000000, wallUs % 1000000);
     buf[size++] = '\r';
     buf[size++] = '\n';
 

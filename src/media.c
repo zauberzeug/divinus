@@ -126,7 +126,8 @@ int save_video_stream(char index, hal_vidstream *stream) {
                         data->length - data->offset);
                     buf_size += data->length - data->offset;
                 }
-                send_mjpeg_to_client(index, mjpeg_buf, buf_size);
+                send_mjpeg_to_client(index, mjpeg_buf, buf_size,
+                    stream->count ? stream->pack[0].timestamp : 0);
             }
             break;
         case HAL_VIDCODEC_JPG:
