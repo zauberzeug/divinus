@@ -326,11 +326,13 @@ static void __method_play(struct connection_item_t *p, rtsp_handle h)
         "\r\n" , p->cseq);
 
     for (int i = 0; i < sizeof(p->trans) / sizeof(*p->trans); i++) {
-        if (!p->trans[i].server_port_rtp) continue;
+        if (!p->trans[i].server_port_rtp && !p->trans[i].is_tcp) continue;
         p->track_id = i;
 
-        ASSERT(__bind_rtcp(p) == SUCCESS, return);
-        ASSERT(__bind_rtp(p) == SUCCESS, return);
+        if (!p->trans[i].is_tcp) {
+            ASSERT(__bind_rtcp(p) == SUCCESS, return);
+            ASSERT(__bind_rtp(p) == SUCCESS, return);
+        }
         p->trans[p->track_id].rtp_timestamp = (millis() * 90) & UINT32_MAX;
         p->trans[p->track_id].rtp_seq = rand_r(&h->ctx);
         p->trans[p->track_id].au_pending = 1;
@@ -535,6 +537,10 @@ static int __connection_reset(void *v)
     p->cseq = 0;
 
     ctx = p->trans[0].rtp_timestamp;
+
+    /* pooled slots are reused: transport state (is_tcp, ports, channels,
+       sequence/timestamp) must not leak into the slot's next client */
+    memset(p->trans, 0, sizeof(p->trans));
 
     /* randomize session id to avoid conflict */
     p->session_id = __get_random_llu(&ctx);
