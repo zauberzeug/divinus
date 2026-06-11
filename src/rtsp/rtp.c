@@ -165,16 +165,11 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
     MUST(con = trans->con, return FAILURE);
     if (!con->trans[track_id].server_port_rtp) return SUCCESS;
 
-    /* All packets of one access unit must carry the same RTP timestamp:
-       receivers delimit frames by timestamp change (plus the marker bit),
-       so a fragmented frame's packets must not straddle two timestamps.
-       Latch a fresh timestamp only when a new AU begins (the packet after a
-       marker). The previous code refreshed it on the marker packet itself,
-       i.e. the last fragment, leaving a frame's leading fragments stamped
-       with the previous frame's timestamp -- which made receivers merge
-       adjacent frames into one access unit (duplicate POC, corrupt video). */
     if (con->trans[track_id].au_pending) {
-        con->trans[track_id].rtp_timestamp = (millis() * 90) & UINT32_MAX;
+        unsigned int ts = (millis() * 90) & UINT32_MAX;
+        if ((int)(ts - con->trans[track_id].rtp_timestamp) <= 0)
+            ts = con->trans[track_id].rtp_timestamp + 1;
+        con->trans[track_id].rtp_timestamp = ts;
         con->trans[track_id].au_pending = 0;
     }
     rtp->packet.header.seq = htons(con->trans[track_id].rtp_seq);
@@ -215,7 +210,6 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
     struct connection_item_t *con;
     struct __transfer_set_t *trans_set = v;
     struct transfer_item_t *trans;
-    unsigned int timestamp_offset;
     int ret = FAILURE;
 
     list_upcast(con,e);
@@ -236,11 +230,6 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
 
         MUST(list_push(&trans_set->list_head, &trans->list_entry) == SUCCESS,
             goto error);
-
-        timestamp_offset = trans_set->h->stat.ts_offset;
-
-        con->trans[con->track_id].rtp_timestamp = 
-            ((unsigned int)con->trans[con->track_id].rtp_timestamp + timestamp_offset);
     }
 
     ret = SUCCESS;

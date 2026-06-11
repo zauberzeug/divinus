@@ -849,15 +849,3 @@ void rtsp_configure_auth(rtsp_handle h, const char *user, const char *pass)
         h->isAuthOn = 0;
     }
 }
-
-int rtsp_tick(rtsp_handle h)
-{
-    ASSERT(h, return FAILURE);
-    struct timeval tv;
-
-    ASSERT(gettimeofday(&tv, NULL) == 0, ({
-        ERR("gettimeofday failed\n");
-        return FAILURE;}));
-
-    return __get_timestamp_offset(&h->stat, &tv);
-}
