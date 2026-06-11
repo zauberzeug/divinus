@@ -66,15 +66,6 @@ enum __method_e {
 /******************************************************************************
  *              DATA STRUCTURES
  ******************************************************************************/
-struct __time_stat_t {
-    struct timeval prev_tv;
-    unsigned long long avg;
-    unsigned long long total_cnt;
-    unsigned long long jitter_mask;
-    unsigned int cnt;
-    unsigned int ts_offset;
-};
-
 typedef struct {
     int server_rtcp_fd;
     int server_rtp_fd;
@@ -93,6 +84,7 @@ typedef struct {
     char is_tcp;
     unsigned char channel_rtp;
     unsigned char channel_rtcp;
+    char au_pending;
 } transport_t;
 
 struct connection_item_t {
@@ -129,7 +121,6 @@ struct __rtsp_obj_t {
     bufpool_handle con_pool;
     bufpool_handle transfer_pool;
     unsigned short port;
-    struct __time_stat_t stat;
     char isH265;
     unsigned char audioPt;
     mime_encoded_handle sprop_vps_b64;
@@ -231,39 +222,6 @@ static inline int __transfer_item_cleaner(struct list_t *e)
 
     ASSERT(bufpool_detach(p->pool, p) == SUCCESS,
         return FAILURE);
-
-    return SUCCESS;
-}
-
-static inline int __get_timestamp_offset(struct __time_stat_t *p_stat, struct timeval *p_tv)
-{
-    unsigned long long kts;
-
-    if (p_stat->prev_tv.tv_sec == 0) {
-        p_stat->prev_tv = *p_tv;
-        p_stat->total_cnt = 0;
-        p_stat->cnt = 0;
-        p_stat->avg = 0;
-        p_stat->jitter_mask = 0;
-        return SUCCESS;
-    }
-
-    /* we fix time stamp offset in 5 years of running on 30fps.. */
-    if (p_stat->total_cnt < 0xFFFFFFFFLLU) {
-        kts = ((p_tv->tv_sec - p_stat->prev_tv.tv_sec) * 1000000 + (p_tv->tv_usec - p_stat->prev_tv.tv_usec)) * 90;
-
-        p_stat->avg = ((p_stat->avg * p_stat->total_cnt) + kts * 1000) / (p_stat->total_cnt + 1);
-        p_stat->prev_tv = *p_tv;
-        p_stat->total_cnt += 1;
-    }
-
-    p_stat->jitter_mask += p_stat->avg % 1000000;
-    p_stat->ts_offset = (p_stat->avg / 1000000);
-
-    if (p_stat->jitter_mask > 1000000) {
-        p_stat->ts_offset += 1;
-        p_stat->jitter_mask -= 1000000;
-    }
 
     return SUCCESS;
 }

@@ -39,8 +39,6 @@ extern rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int pri
 
 extern void rtsp_configure_auth(rtsp_handle h, const char *user, const char *pass);
 
-extern int rtsp_tick(rtsp_handle h);
-
 #if defined (__cplusplus)
 }
 #endif

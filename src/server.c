@@ -1552,6 +1552,9 @@ void *server_thread(void *vargp) {
             socklen_t client_sock_len = sizeof(client_sock);
             int clntFd = accept(server_fd, (struct sockaddr *)&client_sock, &client_sock_len);
             if (clntFd >= 0) {
+                int flag = 1;
+                if (setsockopt(clntFd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0)
+                    HAL_WARNING("server", "setsockopt(TCP_NODELAY) failed");
                 fcntl(clntFd, F_SETFL, fcntl(clntFd, F_GETFL, 0) | O_NONBLOCK);
                 int i = 0;
                 for (i = 0; i < HTTP_MAX_CLIENTS; i++) {

@@ -333,6 +333,7 @@ static void __method_play(struct connection_item_t *p, rtsp_handle h)
         ASSERT(__bind_rtp(p) == SUCCESS, return);
         p->trans[p->track_id].rtp_timestamp = (millis() * 90) & UINT32_MAX;
         p->trans[p->track_id].rtp_seq = rand_r(&h->ctx);
+        p->trans[p->track_id].au_pending = 1;
         p->trans[p->track_id].rtcp_octet = 0;
         p->trans[p->track_id].rtcp_packet_cnt = 0;
         p->trans[p->track_id].rtcp_tick_org = 150; // TODO: must be variant
@@ -908,20 +909,4 @@ void rtsp_configure_auth(rtsp_handle h, const char *user, const char *pass)
     } else {
         h->isAuthOn = 0;
     }
-}
-
-int rtsp_tick(rtsp_handle h)
-{
-    ASSERT(h, return FAILURE);
-    struct timespec ts;
-    struct timeval tv;
-
-    ASSERT(clock_gettime(CLOCK_MONOTONIC_COARSE, &ts) == 0, ({
-        ERR("clock_gettime failed\n");
-        return FAILURE;}));
-
-    tv.tv_sec = ts.tv_sec;
-    tv.tv_usec = ts.tv_nsec / 1000;
-
-    return __get_timestamp_offset(&h->stat, &tv);
 }

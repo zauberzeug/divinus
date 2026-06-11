@@ -108,7 +108,6 @@ int main(int argc, char *argv[]) {
         record_start();
 
     while (keepRunning) {
-        if (app_config.rtsp_enable && rtspHandle) rtsp_tick(rtspHandle);
         watchdog_reset();
         sleep(1);
     }

@@ -165,12 +165,19 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
     MUST(con = trans->con, return FAILURE);
     if (!con->trans[track_id].server_port_rtp && !con->trans[track_id].is_tcp) return SUCCESS;
 
+    if (con->trans[track_id].au_pending) {
+        unsigned int ts = (millis() * 90) & UINT32_MAX;
+        if ((int)(ts - con->trans[track_id].rtp_timestamp) <= 0)
+            ts = con->trans[track_id].rtp_timestamp + 1;
+        con->trans[track_id].rtp_timestamp = ts;
+        con->trans[track_id].au_pending = 0;
+    }
     rtp->packet.header.seq = htons(con->trans[track_id].rtp_seq);
-    if (rtp->packet.header.m)
-        con->trans[track_id].rtp_timestamp = (millis() * 90) & UINT32_MAX;
     rtp->packet.header.ts = htonl(con->trans[track_id].rtp_timestamp);
     rtp->packet.header.ssrc = htonl(con->ssrc);
     con->trans[track_id].rtp_seq += 1;
+    if (rtp->packet.header.m)
+        con->trans[track_id].au_pending = 1;
 
     if (con->trans[track_id].is_tcp) {
         unsigned char head[4];
@@ -240,7 +247,6 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
     struct connection_item_t *con;
     struct __transfer_set_t *trans_set = v;
     struct transfer_item_t *trans;
-    unsigned int timestamp_offset;
     int ret = FAILURE;
 
     list_upcast(con,e);
@@ -261,11 +267,6 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
 
         MUST(list_push(&trans_set->list_head, &trans->list_entry) == SUCCESS,
             goto error);
-
-        timestamp_offset = trans_set->h->stat.ts_offset;
-
-        con->trans[trans_set->track_id].rtp_timestamp = 
-            ((unsigned int)con->trans[trans_set->track_id].rtp_timestamp + timestamp_offset);
     }
 
     ret = SUCCESS;
