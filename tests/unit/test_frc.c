@@ -77,6 +77,11 @@ static void test_effective_fps_follows_shutter(void) {
        a 40 ms shutter fits in a 15 fps frame time, 25 fps is not "needed". */
     assert(frc_effective_fps(15, 40000) == 15);
 
+    /* ...and the 3 fps sensor floor must not override a configured rate
+       below it: an explicit >1 s exposure at 1-2 fps stays honored. */
+    assert(frc_effective_fps(2, 1000000) == 2);
+    assert(frc_effective_fps(1, 2000000) == 1);
+
     /* No configured rate yet: nothing to derive from. */
     assert(frc_effective_fps(0, 333333) == 0);
 }

@@ -21,7 +21,9 @@ int frc_effective_fps(int configFps, unsigned int shutterUs)
         return configFps;
 
     int fps = 1000000 / shutterUs;
-    return fps < 3 ? 3 : fps;
+    if (fps < 3)
+        fps = 3;
+    return fps < configFps ? fps : configFps;
 }
 
 unsigned int frc_shutter_cap(int fps, unsigned int shutterUs)
