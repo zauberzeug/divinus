@@ -20,7 +20,8 @@ all: $(BINS)
 	@fail=0; for t in $(BINS); do echo "== $$t =="; ./$$t || fail=1; done; \
 	[ $$fail -eq 0 ] && echo "all unit tests passed" || { echo "UNIT TESTS FAILED"; exit 1; }
 
-unit/%: unit/%.c
+.SECONDEXPANSION:
+unit/%: unit/%.c $$($$*_SRC)
 	$(CC) $(CFLAGS) -o $@ $< $($*_SRC) $(LDFLAGS)
 
 clean:
