@@ -18,7 +18,9 @@ jobs:
         run: make -C tests
 
   analysis:
-    runs-on: ubuntu-latest
+    # pinned image so the gcc version (and thus the -fanalyzer finding set the
+    # baseline is keyed to) stays stable
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: gcc -fanalyzer (gating, vs baseline)
