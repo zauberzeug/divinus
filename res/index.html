@@ -278,6 +278,7 @@
 		function saveAndRestart() {
 			if (!confirm('Save settings and restart? The stream will briefly disconnect.')) return;
 			apiApply('exposure');
+			apiApply('gain');
 			apiApply('isp');
 			apiApply('mp4');
 			apiApply('mjpeg');
@@ -383,6 +384,7 @@
 		function onLoad() {
 			apiRead('audio');
 			apiRead('exposure');
+			apiRead('gain');
 			apiRead('isp');
 			apiRead('jpeg');
 			apiRead('mp4');
@@ -487,9 +489,29 @@
     							<td><label for="exposure_exposure">Exposure&nbsp;(&micro;s)</label></td>
     							<td><input type="number" id="exposure_exposure" min="0" max="333333" step="1000" placeholder="0 = auto"></td>
     						</tr>
+    						<tr>
+    							<td><label for="gain_min_gain">Sensor gain min</label></td>
+    							<td><input type="number" id="gain_min_gain" min="0" step="1024" placeholder="0 = default"></td>
+    						</tr>
+    						<tr>
+    							<td><label for="gain_max_gain">Sensor gain max</label></td>
+    							<td><input type="number" id="gain_max_gain" min="0" step="1024" placeholder="0 = default"></td>
+    						</tr>
+    						<tr>
+    							<td><label for="gain_min_isp_gain">ISP gain min</label></td>
+    							<td><input type="number" id="gain_min_isp_gain" min="0" step="1024" placeholder="0 = default"></td>
+    						</tr>
+    						<tr>
+    							<td><label for="gain_max_isp_gain">ISP gain max</label></td>
+    							<td><input type="number" id="gain_max_isp_gain" min="0" step="1024" placeholder="0 = default"></td>
+    						</tr>
+    						<tr>
+    							<td colspan="2"><small>Gain unit: 1024 = 1&times; (2048 = 2&times;, &hellip;), 0 keeps the firmware default; the sensor-specific range shows after loading.</small></td>
+    						</tr>
     					</table>
     					<a href="javascript:apiApply('isp')" class="btn right">Apply</a>
     					<a href="javascript:apiApply('exposure')" class="btn right mr1">Apply exposure</a>
+    					<a href="javascript:apiApply('gain')" class="btn right mr1">Apply gain</a>
     				</fieldset>
     			</div>
 				<div class="6 col box">
