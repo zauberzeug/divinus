@@ -8,9 +8,9 @@ static int recordSize;
 time_t recordStartTime = 0;
 char recordOn = 0, recordPath[256];
 
-static void record_check_segment_size(int upcoming) {
+static void record_check_segment_size(void) {
     if (app_config.record_segment_size <= 0) return;
-    if (recordSize + upcoming >= app_config.record_segment_size) {
+    if (recordSize >= app_config.record_segment_size) {
         record_stop();
         record_start();
     }
@@ -118,7 +118,6 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         if (!recordState.header_sent) {
             struct BitBuf header_buf;
             err = mp4_get_header(&header_buf); chk_err_continue
-            record_check_segment_size(header_buf.offset);
             recordSize += header_buf.offset;
             fwrite(header_buf.buf, 1, header_buf.offset, recordFile);
 
@@ -135,19 +134,17 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         {
             struct BitBuf moof_buf;
             err = mp4_get_moof(&moof_buf); chk_err_continue
-            record_check_segment_size(moof_buf.offset);
             recordSize += moof_buf.offset;
             fwrite(moof_buf.buf, 1, moof_buf.offset, recordFile);
         }
         {
             struct BitBuf mdat_buf;
             err = mp4_get_mdat(&mdat_buf); chk_err_continue
-            record_check_segment_size(mdat_buf.offset);
             recordSize += mdat_buf.offset;
             fwrite(mdat_buf.buf, 1, mdat_buf.offset, recordFile);
-            
         }
     }
 
+    record_check_segment_size();
     record_check_segment_duration();
 }
