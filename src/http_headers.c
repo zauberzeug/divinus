@@ -5,6 +5,7 @@
    caller's request buffer and stay valid only as long as it does. */
 void http_headers_parse(http_header_t *headers, char **state, const char *end) {
     http_header_t *h = headers;
+    memset(headers, 0, (HTTP_MAX_HEADERS + 1) * sizeof(*headers));
     while (h < headers + HTTP_MAX_HEADERS) {
         char *k, *v, *e;
         if (!(k = strtok_r(NULL, "\r\n: \t", state)))
