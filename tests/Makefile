@@ -15,6 +15,7 @@ BINS  := $(addprefix unit/,$(TESTS))
 # Per-test source dependencies (besides the test file itself).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
 test_http_headers_SRC := $(SRCDIR)/http_headers.c $(SRCDIR)/hal/tools.c
+test_config_bounds_SRC := $(SRCDIR)/hal/config.c $(SRCDIR)/hal/tools.c
 
 .PHONY: all clean
 all: $(BINS)
