@@ -1531,8 +1531,8 @@ void respond_request(http_request_t *req) {
                 unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
-                unsigned int result = strtoul(value, &remain, 10);
-                if (remain == value) continue;
+                long result = strtol(value, &remain, 10);
+                if (remain == value || result <= 0) continue;
                 if (EQUALS(key, "min_gain"))
                     request.minSensorGain = result;
                 else if (EQUALS(key, "max_gain"))
