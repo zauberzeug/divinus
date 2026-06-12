@@ -21,8 +21,10 @@ void http_headers_parse(http_header_t *headers, char **state, const char *end) {
         fprintf(stderr, "         (H) %s: %s\n", k, v);
 #endif
         if (*state >= end) break;
+        /* e is the '\n' closing this line; a "\r\n" right after it is the
+           blank line ending the headers */
         e = v + 1 + strlen(v);
-        if (e[1] == '\r' && e[2] == '\n')
+        if (e + 2 < end && e[1] == '\r' && e[2] == '\n')
             break;
     }
 }

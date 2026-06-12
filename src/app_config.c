@@ -220,12 +220,12 @@ int app_config_save(void) {
 static enum ConfigError parse_auth_cred(struct IniConfig *ini,
     const char *section, const char *param, char *value, size_t size) {
     enum ConfigError err = parse_param_value_n(ini, section, param, value, size);
-    if (err == CONFIG_PARAM_TOO_LONG) {
+    if (err == CONFIG_PARAM_NOT_FOUND || err == CONFIG_SECTION_NOT_FOUND)
+        return CONFIG_OK;
+    if (err == CONFIG_PARAM_TOO_LONG)
         HAL_DANGER("config", "[%s] %s must be at most %zu characters!\n",
             section, param, size - 1);
-        return err;
-    }
-    return CONFIG_OK;
+    return err;
 }
 
 enum ConfigError app_config_parse(void) {
