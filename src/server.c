@@ -839,9 +839,13 @@ void respond_request(http_request_t *req) {
     if (app_config.mjpeg_enable && EQUALS(req->uri, "/mjpeg")) {
         /* Raise the accept-path SO_SNDBUF cap (sized for small H26x/fMP4
            payloads) so a whole JPEG frame fits the buffer and the
-           complete-or-skip send stays single-shot */
+           complete-or-skip send stays single-shot. SO_SNDBUF is silently
+           clipped to net.core.wmem_max (192 KiB on the target firmware,
+           below one large JPEG frame), so prefer SO_SNDBUFFORCE, which
+           may exceed it under CAP_NET_ADMIN */
         int sndbuf = HTTP_MJPEG_SNDBUF_SIZE;
-        if (setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+        if (setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0 &&
+            setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
             HAL_WARNING("server", "setsockopt(SO_SNDBUF) failed");
         respLen = sprintf(response,
             "HTTP/1.0 200 OK\r\n"
