@@ -60,7 +60,7 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
             int r = send(con->client_fd, head + sent_h, 4 - sent_h, 0);
             if (r > 0) sent_h += r;
             else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
-                ++spins <= 100) usleep(1000);
+                ++spins <= 10) usleep(1000);
             else { sent_h = -1; break; }
         }
         if (sent_h == 4) {
@@ -69,7 +69,7 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
                 int r = send(con->client_fd, (char*)&(rtcp) + sent_b, 36 - sent_b, 0);
                 if (r > 0) sent_b += r;
                 else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
-                    ++spins <= 100) usleep(1000);
+                    ++spins <= 10) usleep(1000);
                 else { sent_b = -1; break; }
             }
             send_bytes = sent_b;

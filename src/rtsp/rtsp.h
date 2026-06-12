@@ -98,6 +98,10 @@ struct connection_item_t {
     transport_t trans[2];
 
     enum __connection_state_e con_state;
+    /* set by the sender threads on send failure; the control thread owns
+       con_state and the base refcount, so it alone turns this into a
+       disconnect (see __connection_drop_stalled) */
+    char stalled;
     enum __parser_state_e parser_state;
     enum __method_e method;
     bufpool_handle pool;

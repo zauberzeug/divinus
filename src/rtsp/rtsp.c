@@ -78,6 +78,7 @@ static inline int __find_fd_max(struct list_head_t *head);
 
 static inline bufpool_handle __connectionpool_create(int num);
 static int __connection_is_dead(struct list_t *l);
+static int __connection_drop_stalled(struct list_t *l, void *v);
 
 /******************************************************************************
  *              PRIVATE DATA
@@ -537,6 +538,7 @@ static int __connection_reset(void *v)
 
     p->given_session_id = 0;
     p->cseq = 0;
+    p->stalled = 0;
 
     /* mix in the clock: a client that left before PLAY would leave a zero
        timestamp and degenerate the session id to the unset sentinel */
@@ -774,6 +776,21 @@ static int __connection_is_dead(struct list_t *l)
     return c->con_state == __CON_S_DISCONNECTED;
 }
 
+static int __connection_drop_stalled(struct list_t *l, void *v)
+{
+    struct connection_item_t *c;
+
+    list_upcast(c, l);
+
+    if (c->stalled && c->con_state != __CON_S_DISCONNECTED) {
+        ERR("dropping stalled client %s\n", inet_ntoa(c->addr.sin_addr));
+        c->con_state = __CON_S_DISCONNECTED;
+        MUST(bufpool_detach(c->pool, c) == SUCCESS, return FAILURE);
+    }
+
+    return SUCCESS;
+}
+
 /******************************************************************************
  *                  THREAD CALLBACKS
  ******************************************************************************/
@@ -809,23 +826,26 @@ static void *rtspThrFxn(void *v)
                     ERR("select:%s\n", strerror(errno));
                     goto error;}));
 
-        if (ret_select > 0){
-            /* lock while tcp layer is done */
-            rtsp_lock(rh);
+        /* lock while tcp layer is done */
+        rtsp_lock(rh);
 
+        if (ret_select > 0){
             ASSERT(__accept_proc_sock(rh, server_fd, &socks) == SUCCESS,
                     ({ rtsp_unlock(rh); goto error;}));
 
             ASSERT(list_map_inline(&rh->con_list, __message_proc_sock, &socks) == SUCCESS,
                     ({ rtsp_unlock(rh); goto error;}));
-
-            MUST(list_sweep(&rh->con_list, __connection_is_dead) == SUCCESS,
-                    ({ rtsp_unlock(rh); goto error;}));
-
-            socks.nfds = max(server_fd, __find_fd_max(&rh->con_list)) + 1;
-
-            rtsp_unlock(rh);
         }
+
+        MUST(list_map_inline(&rh->con_list, (__connection_drop_stalled), NULL) == SUCCESS,
+                ({ rtsp_unlock(rh); goto error;}));
+
+        MUST(list_sweep(&rh->con_list, __connection_is_dead) == SUCCESS,
+                ({ rtsp_unlock(rh); goto error;}));
+
+        socks.nfds = max(server_fd, __find_fd_max(&rh->con_list)) + 1;
+
+        rtsp_unlock(rh);
         //bufpool_statistics(rh->con_pool);
     }
 
