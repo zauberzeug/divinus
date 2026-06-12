@@ -17,8 +17,6 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.8.8
         with:
           locked: true
-      - name: Host build
-        run: pixi run build-host
       - name: Unit tests (ASan/UBSan)
         run: pixi run test
       - name: Static analysis (gcc -fanalyzer, vs baseline)
