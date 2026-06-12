@@ -1,6 +1,7 @@
 # Host-native unit tests: one executable per tests/unit/test_*.c, built with
 # sanitizers and warnings. Each test lists the src/ objects it needs via a
-# test-local <name>_SRC. src/hal/ and src/lib/ are not host-testable.
+# test-local <name>_SRC. Vendor-bound code (src/hal/<vendor>/, src/lib/) is
+# not host-testable; pure policy modules like src/hal/frc.c are.
 
 CC      ?= cc
 SRCDIR  := ../src
@@ -13,14 +14,16 @@ BINS  := $(addprefix unit/,$(TESTS))
 
 # Per-test source dependencies (besides the test file itself).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
+test_frc_SRC := $(SRCDIR)/hal/frc.c
 
 .PHONY: all clean
 all: $(BINS)
 	@fail=0; for t in $(BINS); do echo "== $$t =="; ./$$t || fail=1; done; \
 	[ $$fail -eq 0 ] && echo "all unit tests passed" || { echo "UNIT TESTS FAILED"; exit 1; }
 
-unit/%: unit/%.c
-	$(CC) $(CFLAGS) -o $@ $< $($*_SRC) $(LDFLAGS)
+.SECONDEXPANSION:
+unit/%: unit/%.c $$($$*_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f $(BINS)
