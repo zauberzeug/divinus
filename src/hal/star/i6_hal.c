@@ -162,6 +162,8 @@ int i6_channel_bind(char index, char framerate)
             .device = _i6_vpe_dev, .channel = _i6_vpe_chn, .port = index };
         i6_sys_bind dest = { .module = I6_SYS_MOD_VENC,
             .device = device, .channel = index, .port = _i6_venc_port };
+        if (ret = i6_sys.fnSetOutputDepth(&source, 0, 2))
+            return ret;
         if (ret = i6_sys.fnBindExt(&source, &dest, framerate, framerate,
             I6_SYS_LINK_FRAMEBASE, 0))
             return ret;
