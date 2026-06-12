@@ -25,23 +25,22 @@ static struct sockaddr_in loopback_addr(unsigned short port) {
     return sa;
 }
 
-static int listen_on_loopback(struct sockaddr_in *sa) {
+/* A bound port with no listen queue refuses connections; the held fd
+   keeps the port from being reused while the test runs. */
+static int bind_refusing(struct sockaddr_in *sa) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     assert(fd != -1);
     *sa = loopback_addr(0);
     assert(!bind(fd, (struct sockaddr *)sa, sizeof(*sa)));
-    assert(!listen(fd, 1));
     socklen_t len = sizeof(*sa);
     assert(!getsockname(fd, (struct sockaddr *)sa, &len));
     return fd;
 }
 
-/* A bound-then-closed port: connecting to it is refused. */
-static struct sockaddr_in refused_addr(void) {
-    struct sockaddr_in sa;
-    int fd = listen_on_loopback(&sa);
-    close(fd);
-    return sa;
+static int listen_on_loopback(struct sockaddr_in *sa) {
+    int fd = bind_refusing(sa);
+    assert(!listen(fd, 1));
+    return fd;
 }
 
 static struct addrinfo make_entry(struct sockaddr_in *sa, struct addrinfo *next) {
@@ -72,8 +71,8 @@ static void test_connects_to_listening_entry(void) {
 }
 
 static void test_walks_past_refused_entry(void) {
-    struct sockaddr_in dead = refused_addr();
-    struct sockaddr_in live;
+    struct sockaddr_in dead, live;
+    int holder = bind_refusing(&dead);
     int listener = listen_on_loopback(&live);
     struct addrinfo second = make_entry(&live, NULL);
     struct addrinfo first = make_entry(&dead, &second);
@@ -87,18 +86,23 @@ static void test_walks_past_refused_entry(void) {
     close(peer);
     close(fd);
     close(listener);
+    close(holder);
 }
 
 /* Upstream crashed here: with every connect() failing, the loop guard
    `r != NULL || ret != 0` kept iterating past the end of the list and
    dereferenced NULL in `r = r->ai_next`. */
 static void test_unreachable_host_returns_failure(void) {
-    struct sockaddr_in dead1 = refused_addr();
-    struct sockaddr_in dead2 = refused_addr();
+    struct sockaddr_in dead1, dead2;
+    int holder1 = bind_refusing(&dead1);
+    int holder2 = bind_refusing(&dead2);
     struct addrinfo second = make_entry(&dead2, NULL);
     struct addrinfo first = make_entry(&dead1, &second);
 
     assert(http_post_connect(&first) == -1);
+
+    close(holder1);
+    close(holder2);
 }
 
 static void test_empty_list_returns_failure(void) {
