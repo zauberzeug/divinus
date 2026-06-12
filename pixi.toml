@@ -1,0 +1,22 @@
+# Pinned, locked toolchain (pixi.lock) so host builds, unit tests, and the
+# gcc -fanalyzer static-analysis gate are reproducible locally and in CI.
+# The cross-compile toolchains for on-device builds are fetched by build.sh.
+[workspace]
+name = "divinus"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+gcc = "13.*"          # host build, unit tests, -fanalyzer gate
+gxx = "13.*"
+make = "*"
+cppcheck = "*"
+wget = "*"            # build.sh downloads the on-device cross toolchains
+ffmpeg = "*"          # integration stream tests
+uv = "*"              # integration test scripts (PEP 723)
+
+[tasks]
+build-host = "make -C src clean && make -C src CC=gcc OPT='-O1 -lm'"
+build = "sh build.sh"          # e.g. pixi run build star6e
+test = "make -C tests CC=gcc"
+analyze = "sh tests/analyze.sh"
