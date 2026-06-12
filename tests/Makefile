@@ -13,6 +13,7 @@ BINS  := $(addprefix unit/,$(TESTS))
 
 # Per-test source dependencies (besides the test file itself).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
+test_http_post_SRC := $(SRCDIR)/http_post.c
 
 .PHONY: all clean
 all: $(BINS)
