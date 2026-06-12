@@ -1,5 +1,7 @@
 #include "server.h"
 
+#include "http_headers.h"
+
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
 #define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
@@ -40,10 +42,6 @@ struct {
 } client_fds[HTTP_MAX_CLIENTS];
 
 typedef struct {
-    char *name, *value;
-} http_header_t;
-
-typedef struct {
     int code;
     const char *msg, *desc;
 } http_error_t;
@@ -58,7 +56,7 @@ const http_error_t http_errors[] = {
     {501, "Not Implemented", "The server does not support the functionality."},
     {503, "Service Unavailable", "All stream slots are currently in use."}
 };
-http_header_t http_headers[17] = {{"\0", "\0"}};
+http_header_t http_headers[HTTP_MAX_HEADERS + 1] = {0};
 
 int server_fd = -1;
 pthread_t server_thread_id;
@@ -561,11 +559,7 @@ void send_html(const int fd, const char *data) {
 }
 
 char *request_header(const char *name) {
-    http_header_t *h = http_headers;
-    for (; h->name; h++)
-        if (!strcasecmp(h->name, name))
-            return h->value;
-    return NULL;
+    return http_headers_get(http_headers, name);
 }
 
 http_header_t *request_headers(void) { return http_headers; }
@@ -617,24 +611,7 @@ grant_access:
         return;
     }
 
-    http_header_t *h = http_headers;
-    while (h < http_headers + 16) {
-        char *k, *v, *e;
-        if (!(k = strtok_r(NULL, "\r\n: \t", &state)))
-            break;
-        v = strtok_r(NULL, "\r\n", &state);
-        if (!v) break;
-        while (*v && *v == ' ' && v++);
-        h->name = k;
-        h++->value = v;
-#ifdef DEBUG_HTTP
-        fprintf(stderr, "         (H) %s: %s\n", k, v);
-#endif
-        if (state >= req->input + req->header_len) break;
-        e = v + 1 + strlen(v);
-        if (e[1] == '\r' && e[2] == '\n')
-            break;
-    }
+    http_headers_parse(http_headers, &state, req->input + req->header_len);
 
     req->payload = req->input + req->header_len;
 }
