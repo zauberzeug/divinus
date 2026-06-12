@@ -115,7 +115,6 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         }
 
         static enum BufError err;
-        static char len_buf[50];
         if (!recordState.header_sent) {
             struct BitBuf header_buf;
             err = mp4_get_header(&header_buf); chk_err_continue
