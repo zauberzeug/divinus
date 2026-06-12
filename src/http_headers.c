@@ -1,5 +1,7 @@
 #include "http_headers.h"
 
+#include "hal/tools.h"
+
 /* Tokenizes "Name: value" lines into headers[], continuing the strtok_r
    pass the caller started on the request line. The entries point into the
    caller's request buffer and stay valid only as long as it does. */
@@ -30,4 +32,20 @@ char *http_headers_get(const http_header_t *headers, const char *name) {
         if (!strcasecmp(h->name, name))
             return h->value;
     return NULL;
+}
+
+/* Builds the expected "Basic <base64(user:pass)>" value without ever
+   writing past out or the internal credential buffer. */
+void http_basic_auth(char *out, size_t out_size, const char *user,
+    const char *pass) {
+    char cred[HTTP_BASIC_CRED_MAX];
+    int len = snprintf(cred, sizeof(cred), "%s:%s", user, pass);
+    if (len >= (int)sizeof(cred))
+        len = sizeof(cred) - 1;
+    if (out_size < 6 + (size_t)base64_encode_length(len)) {
+        if (out_size) *out = '\0';
+        return;
+    }
+    memcpy(out, "Basic ", 6);
+    base64_encode(out + 6, cred, len);
 }

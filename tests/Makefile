@@ -1,6 +1,7 @@
 # Host-native unit tests: one executable per tests/unit/test_*.c, built with
 # sanitizers and warnings. Each test lists the src/ objects it needs via a
-# test-local <name>_SRC. src/hal/ and src/lib/ are not host-testable.
+# test-local <name>_SRC. src/lib/ and most of src/hal/ are vendor-coupled and
+# not host-testable; plain-C exceptions like hal/tools.c link fine.
 
 CC      ?= cc
 SRCDIR  := ../src
@@ -13,7 +14,7 @@ BINS  := $(addprefix unit/,$(TESTS))
 
 # Per-test source dependencies (besides the test file itself).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
-test_http_headers_SRC := $(SRCDIR)/http_headers.c
+test_http_headers_SRC := $(SRCDIR)/http_headers.c $(SRCDIR)/hal/tools.c
 
 .PHONY: all clean
 all: $(BINS)

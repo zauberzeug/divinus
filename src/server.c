@@ -700,13 +700,10 @@ void respond_request(http_request_t *req) {
 
         if (!should_skip_auth) {
             char *auth = http_headers_get(req->headers, "Authorization");
-            char cred[66], valid[256];
+            char valid[HTTP_BASIC_AUTH_MAX];
 
-            strcpy(cred, app_config.web_auth_user);
-            strcpy(cred + strlen(app_config.web_auth_user), ":");
-            strcpy(cred + strlen(app_config.web_auth_user) + 1, app_config.web_auth_pass);
-            strcpy(valid, "Basic ");
-            base64_encode(valid + 6, cred, strlen(cred));
+            http_basic_auth(valid, sizeof(valid),
+                app_config.web_auth_user, app_config.web_auth_pass);
 
             if (!auth || !EQUALS(auth, valid)) {
                 respLen = sprintf(response,

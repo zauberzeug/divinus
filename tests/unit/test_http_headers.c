@@ -70,9 +70,34 @@ static void test_no_stale_headers_from_previous_request(void) {
     free(second);
 }
 
+/* The expected Basic credential must be bounded regardless of the
+   configured user/pass lengths (finding #63: stack smash via strcpy). */
+static void test_basic_auth_bounded(void) {
+    char valid[HTTP_BASIC_AUTH_MAX];
+
+    http_basic_auth(valid, sizeof(valid), "user", "pass");
+    assert(!strcmp(valid, "Basic dXNlcjpwYXNz"));
+
+    char user[32], pass[32];
+    memset(user, 'u', sizeof(user) - 1);
+    memset(pass, 'p', sizeof(pass) - 1);
+    user[sizeof(user) - 1] = pass[sizeof(pass) - 1] = '\0';
+    http_basic_auth(valid, sizeof(valid), user, pass);
+    assert(!strncmp(valid, "Basic ", 6));
+    assert(strlen(valid) == 6 + 4 * ((31 + 1 + 31 + 2) / 3));
+
+    char huge[512];
+    memset(huge, 'x', sizeof(huge) - 1);
+    huge[sizeof(huge) - 1] = '\0';
+    http_basic_auth(valid, sizeof(valid), huge, huge);
+    assert(strlen(valid) < sizeof(valid));
+    assert(!strncmp(valid, "Basic ", 6));
+}
+
 int main(void) {
     test_parse_and_get();
     test_no_stale_headers_from_previous_request();
+    test_basic_auth_bounded();
     puts("test_http_headers: OK");
     return 0;
 }
