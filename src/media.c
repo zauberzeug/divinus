@@ -926,6 +926,25 @@ int sdk_start(void) {
                 app_config.exposure);
     }
 
+    {
+        hal_gainlimits request = {
+            .minSensorGain = app_config.min_gain,
+            .maxSensorGain = app_config.max_gain,
+            .minIspGain = app_config.min_isp_gain,
+            .maxIspGain = app_config.max_isp_gain };
+        if (request.minSensorGain || request.maxSensorGain ||
+            request.minIspGain || request.maxIspGain) {
+            ret = set_gain_limits(&request);
+            if (ret)
+                HAL_DANGER("media", "Failed to set gain limits: %#x\n", ret);
+            else
+                HAL_INFO("media", "Gain limits set to sensor %u..%u, "
+                    "isp %u..%u (1024 = 1x, 0 = unchanged)\n",
+                    request.minSensorGain, request.maxSensorGain,
+                    request.minIspGain, request.maxIspGain);
+        }
+    }
+
     HAL_INFO("media", "SDK has started successfully!\n");
 
     return EXIT_SUCCESS;

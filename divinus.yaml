@@ -17,6 +17,12 @@ isp:
   flip: false
   antiflicker: 60
   level3dnr: 0
+  # AE gain limits, SigmaStar convention: 1024 == 1x, 0 keeps the firmware
+  # default; runtime equivalent: /api/gain?max_gain=...
+  # min_gain: 0
+  # max_gain: 0
+  # min_isp_gain: 0
+  # max_isp_gain: 0
 
 osd:
   enable: true
