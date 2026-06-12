@@ -55,7 +55,8 @@ const http_error_t http_errors[] = {
     {404, "Not Found", "The requested resource was not found."},
     {405, "Method Not Allowed", "This method is not handled on this endpoint."},
     {500, "Internal Server Error", "An invalid operation was caught on this request."},
-    {501, "Not Implemented", "The server does not support the functionality."}
+    {501, "Not Implemented", "The server does not support the functionality."},
+    {503, "Service Unavailable", "All stream slots are currently in use."}
 };
 http_header_t http_headers[17] = {{"\0", "\0"}};
 
@@ -210,6 +211,33 @@ void send_http_error(int fd, int code) {
         code, msg, desc);
 
     send_and_close(fd, buffer, len);
+}
+
+/* Claims a client_fds slot and sends the response headers while still
+   holding the lock, so no frame can precede them on the wire; refuses
+   with a 503 when every slot is taken instead of leaking the socket */
+static bool register_stream_client(int sockFd, enum StreamType type,
+    char *header, int headerLen) {
+    pthread_mutex_lock(&client_fds_mutex);
+    for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i) {
+        if (client_fds[i].sockFd >= 0) continue;
+        client_fds[i].sockFd = sockFd;
+        client_fds[i].type = type;
+        client_fds[i].nalCnt = 0;
+        client_fds[i].mp4.header_sent = false;
+        if (type == STREAM_MP4)
+            mp4_clients++;
+        if (send_to_fd(sockFd, header, headerLen) < 0) {
+            free_client(i);
+            pthread_mutex_unlock(&client_fds_mutex);
+            return false;
+        }
+        pthread_mutex_unlock(&client_fds_mutex);
+        return true;
+    }
+    pthread_mutex_unlock(&client_fds_mutex);
+    send_http_error(sockFd, 503);
+    return false;
 }
 
 void send_h26x_to_client(char index, hal_vidstream *stream) {
@@ -744,15 +772,7 @@ void respond_request(http_request_t *req) {
             "Content-Type: audio/mpeg\r\n"
             "Transfer-Encoding: chunked\r\n"
             "Connection: keep-alive\r\n\r\n");
-        send_to_fd(req->clntFd, response, respLen);
-        pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
-            if (client_fds[i].sockFd < 0) {
-                client_fds[i].sockFd = req->clntFd;
-                client_fds[i].type = STREAM_MP3;
-                break;
-            }
-        pthread_mutex_unlock(&client_fds_mutex);
+        register_stream_client(req->clntFd, STREAM_MP3, response, respLen);
         return;
     }
 
@@ -762,57 +782,30 @@ void respond_request(http_request_t *req) {
             "Content-Type: audio/pcm\r\n"
             "Transfer-Encoding: chunked\r\n"
             "Connection: keep-alive\r\n\r\n");
-        send_to_fd(req->clntFd, response, respLen);
-        pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
-            if (client_fds[i].sockFd < 0) {
-                client_fds[i].sockFd = req->clntFd;
-                client_fds[i].type = STREAM_PCM;
-                break;
-            }
-        pthread_mutex_unlock(&client_fds_mutex);
+        register_stream_client(req->clntFd, STREAM_PCM, response, respLen);
         return;
     }
 
     if ((!app_config.mp4_codecH265 && EQUALS(req->uri, "/video.264")) ||
         (app_config.mp4_codecH265 && EQUALS(req->uri, "/video.265"))) {
-        request_idr();
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/octet-stream\r\n"
             "Transfer-Encoding: chunked\r\n"
             "Connection: keep-alive\r\n\r\n");
-        send_to_fd(req->clntFd, response, respLen);
-        pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
-            if (client_fds[i].sockFd < 0) {
-                client_fds[i].sockFd = req->clntFd;
-                client_fds[i].type = STREAM_H26X;
-                client_fds[i].nalCnt = 0;
-                break;
-            }
-        pthread_mutex_unlock(&client_fds_mutex);
+        if (register_stream_client(req->clntFd, STREAM_H26X, response, respLen))
+            request_idr();
         return;
     }
 
     if (app_config.mp4_enable && EQUALS(req->uri, "/video.mp4")) {
-        request_idr();
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: video/mp4\r\n"
             "Transfer-Encoding: chunked\r\n"
             "Connection: keep-alive\r\n\r\n");
-        send_to_fd(req->clntFd, response, respLen);
-        pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
-            if (client_fds[i].sockFd < 0) {
-                client_fds[i].sockFd = req->clntFd;
-                client_fds[i].type = STREAM_MP4;
-                client_fds[i].mp4.header_sent = false;
-                mp4_clients++;
-                break;
-            }
-        pthread_mutex_unlock(&client_fds_mutex);
+        if (register_stream_client(req->clntFd, STREAM_MP4, response, respLen))
+            request_idr();
         return;
     }
 
@@ -823,15 +816,7 @@ void respond_request(http_request_t *req) {
             "Pragma: no-cache\r\n"
             "Connection: close\r\n"
             "Content-Type: multipart/x-mixed-replace; boundary=boundarydonotcross\r\n\r\n");
-        send_to_fd(req->clntFd, response, respLen);
-        pthread_mutex_lock(&client_fds_mutex);
-        for (uint32_t i = 0; i < HTTP_MAX_CLIENTS; ++i)
-            if (client_fds[i].sockFd < 0) {
-                client_fds[i].sockFd = req->clntFd;
-                client_fds[i].type = STREAM_MJPEG;
-                break;
-            }
-        pthread_mutex_unlock(&client_fds_mutex);
+        register_stream_client(req->clntFd, STREAM_MJPEG, response, respLen);
         return;
     }
 
