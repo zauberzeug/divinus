@@ -3,51 +3,19 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "pillow"]
 # ///
-"""Video-latency measurement harness for the divinus streamer.
+"""Measure divinus stream latency and frame cadence against a live camera.
 
-Run this before/after each optimization experiment to get comparable numbers:
+    uv run measure_latency.py [ip] [--stream mjpeg|rtsp|fmp4|all]
+                              [--stall mjpeg|fmp4] [--json-out PATH]
 
-    uv run utils/measure_latency.py [ip] [--stream mjpeg|rtsp|fmp4|all]
-                                    [--samples N] [--json]
-
-Measures two things against a live camera:
-
-1. End-to-end OSD inject-to-receive latency (primary metric)
-   Toggles OSD region text between white and black via the divinus HTTP API
-   (GET /api/osd/<id>?text=...&color=...) at a known instant and detects the
-   brightness change in decoded frames (mean over the top-left window where
-   the text block sits).  latency = frame_receive_time - api_call_time.
-
-   Scope: the OSD is composited at the encoder (VENC) stage, so this covers
-   OSD-inject -> VPE/VENC -> mux -> network -> client decode.  It does NOT
-   include sensor exposure/readout + ISP time (that part is bounded roughly
-   by 1/fps plus 3DNR depth) -- but it is the controllable part of the
-   pipeline, which is what we optimize.
-
-   Quantization caveat: divinus applies OSD updates from a 1 Hz polling
-   thread (src/region.c: sleep(1) at the end of region_thread's loop), so
-   every sample carries an extra uniform 0..1000 ms of poll-phase delay.
-   The MIN over N samples is therefore the comparable pipeline-latency
-   estimate (expected residual poll error ~ 1000/(N+1) ms); p50/p95 mostly
-   reflect poll phase, not the pipeline.
-
-   Precondition: requires `osd: enable: true` in /etc/divinus.yaml on the
-   camera.  When OSD is disabled (the current factory config), the route
-   /api/osd/<id> answers HTTP 400 and the region thread is not running, so
-   this measurement is skipped with a clear message.  This tool deliberately
-   never edits the camera config or restarts divinus.
-
-   The touched OSD slot is restored afterwards (original params if it held
-   text, otherwise made fully transparent; a divinus restart clears it
-   completely).  All OSD changes are runtime-only.
-
-2. Frame-arrival cadence (secondary)
-   Inter-frame arrival deltas over ~10 s per stream -> mean/stdev/p95/max
-   and effective fps.  Confirms actual vs configured fps and surfaces
-   pipeline stalls.  MJPEG arrival times are measured on the raw multipart
-   socket (most precise); rtsp/fmp4 go through ffmpeg's decoder (single
-   thread, nobuffer/low_delay) so their absolute latency includes a small
-   constant client-side decode cost, while the deltas stay accurate.
+Two metrics:
+- OSD inject-to-receive latency: toggle an OSD region via the HTTP API and
+  detect the brightness change in decoded frames. Covers OSD->VENC->network->
+  decode (not sensor/ISP). Needs `osd.enable: true`; the OSD applies on a 1 Hz
+  poll, so the MIN over samples is the comparable number. The tool never edits
+  the camera config and restores the OSD slot afterwards.
+- Frame cadence: inter-frame arrival deltas (mean/stdev/p95/max, effective fps).
+  Pair with --stall to run a slow competing consumer and expose send-path stalls.
 """
 
 import argparse
@@ -289,14 +257,8 @@ def pct(arr, q) -> float:
 
 
 class _Competitor:
-    """A deliberately slow stream reader run in a background thread, to induce
-    server-side backpressure while the primary stream's cadence is measured.
-
-    This is the stall scenario the send-path latency fixes target: a client that
-    drains slower than the encoder produces. On a buggy build it stalls the venc
-    thread and the *other* streams' inter-arrival jitter explodes; a build that
-    disconnects-over-buffers keeps the primary stream tight.
-    """
+    """A deliberately slow stream reader (background thread) that induces
+    server-side backpressure while another stream's cadence is measured."""
 
     def __init__(self, ip: str, stream: str, recv_bytes: int = 2048, delay_s: float = 0.10):
         self.ip, self.stream, self.recv_bytes, self.delay_s = ip, stream, recv_bytes, delay_s

@@ -1,7 +1,5 @@
-/* Smoke test: proves the host test toolchain compiles and links real divinus
-   source (src/fmt/nal.c) and that asserts/sanitizers fire. Real coverage of
-   fmt/ and rtsp/ is added by the unit-test cards; this only exercises the
-   plumbing plus a couple of NAL header / start-code basics. */
+/* Smoke test for the host test toolchain: links real src/fmt/nal.c and checks a
+   couple of NAL header / start-code basics. */
 
 #include <assert.h>
 #include <stdio.h>

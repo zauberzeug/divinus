@@ -24,7 +24,7 @@ make -C tests clean
 Each test compiles natively with `-Wall -Wextra -fsanitize=address,undefined`
 and lists the `src/` objects it needs via a `<name>_SRC` variable in the
 Makefile. `tests/unit/test_nal.c` is a smoke test that proves the toolchain;
-real coverage is added by the unit-test cards.
+real coverage comes later.
 
 ## Static analysis
 
@@ -35,7 +35,7 @@ sh tests/analyze.sh
 Runs `gcc -fanalyzer` over `src/` (excluding `src/lib/`) and fails on any
 analyzer finding that is not already in `tests/analyze-baseline.txt`. The
 baseline records pre-existing findings so the gate catches regressions on
-every PR; as each baselined finding is fixed (tracked by its own card), delete
+every PR; once a baselined finding is fixed, delete
 its line from the baseline. CodeQL default setup (repo Settings → Code
 security) covers the same class with zero maintenance.
 

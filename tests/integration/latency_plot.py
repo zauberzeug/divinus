@@ -3,19 +3,15 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "matplotlib"]
 # ///
-"""Plot a before/after latency A/B from measure_latency.py JSON dumps.
+"""Bar chart of a before/after latency A/B from measure_latency.py JSON dumps,
+with mean +/- 2-sigma error bars (p95 and max annotated, since send-path fixes
+act on the tail).
 
-Renders a succinct bar chart of the per-frame inter-arrival distribution with
-**2-sigma** error bars, for one stream, across two or more labelled runs (e.g.
-baseline vs fix). Mean +/- 2 sigma is drawn as the error bar; p95 and max are
-annotated because the send-path fixes act on the tail, not the mean.
-
-    uv run utils/latency_plot.py --stream rtsp --out docs/research/<card>.png \
+    uv run latency_plot.py --stream rtsp --out out.png \
         "baseline=before.json" "fixed=after.json"
 
 Each positional arg is `label=path` to a measure_latency.py --json-out file.
-Use --metric to pick which series: `cadence` (default; inter-arrival ms, pair
-with measure_latency.py --stall to expose stalls) or `latency` (OSD inject).
+--metric cadence (default, inter-arrival ms; pair with --stall) or latency (OSD).
 """
 
 import argparse

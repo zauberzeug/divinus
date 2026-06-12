@@ -1,12 +1,7 @@
 #!/bin/sh
-# Static-analysis gate: gcc -fanalyzer over divinus's own sources (everything
-# under src/ except the vendored src/lib/). Fails on any analyzer warning in our
-# code that is not already recorded in analyze-baseline.txt.
-#
-# The baseline captures pre-existing findings so the gate goes green now and
-# catches NEW regressions on every PR. As baselined findings get fixed (each is
-# tracked by its own deck card), delete their line from analyze-baseline.txt.
-# Vendored libraries (spng, miniz, schrift, shine, tinysvcmdns) are excluded.
+# gcc -fanalyzer over src/ (excluding vendored src/lib/), failing on any finding
+# not already in analyze-baseline.txt. Delete a line from the baseline once that
+# finding is fixed.
 set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"

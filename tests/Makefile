@@ -1,12 +1,6 @@
-# Host-native test build for divinus. Compiles the vendor-free, hardware-free
-# sources (src/fmt/, src/rtsp/, ...) with the host compiler plus sanitizers and
-# warnings, links one executable per tests/unit/test_*.c, and runs them.
-#
-#   make            build + run every unit test
-#   make clean
-#
-# src/hal/ (hardware-bound) and src/lib/ (vendored third-party) stay out of host
-# tests. Each test lists the source objects it needs via test-local <name>_SRC.
+# Host-native unit tests: one executable per tests/unit/test_*.c, built with
+# sanitizers and warnings. Each test lists the src/ objects it needs via a
+# test-local <name>_SRC. src/hal/ and src/lib/ are not host-testable.
 
 CC      ?= cc
 SRCDIR  := ../src
