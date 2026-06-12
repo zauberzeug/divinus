@@ -164,6 +164,7 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
 
     MUST(con = trans->con, return FAILURE);
     if (!con->trans[track_id].server_port_rtp && !con->trans[track_id].is_tcp) return SUCCESS;
+    if (con->stalled || con->con_state != __CON_S_PLAYING) return SUCCESS;
 
     if (con->trans[track_id].au_pending) {
         unsigned int ts = (millis() * 90) & UINT32_MAX;
@@ -195,7 +196,7 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
             int r = send(con->client_fd, head + sent_h, 4 - sent_h, 0);
             if (r > 0) sent_h += r;
             else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
-                ++spins <= 100) usleep(1000);
+                ++spins <= 10) usleep(1000);
             else { sent_h = -1; break; }
         }
         if (sent_h == 4) {
@@ -204,7 +205,7 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
                 int r = send(con->client_fd, (char*)&(rtp->packet) + sent_b, rtp->rtpsize - sent_b, 0);
                 if (r > 0) sent_b += r;
                 else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
-                    ++spins <= 100) usleep(1000);
+                    ++spins <= 10) usleep(1000);
                 else { sent_b = -1; break; }
             }
             send_bytes = sent_b;
@@ -219,26 +220,25 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
             return SUCCESS;
         }
     } else {
-        char attempts = 0;
-        do  {
-            send_bytes = send(con->trans[track_id].server_rtp_fd,
-                &(rtp->packet),rtp->rtpsize,0);
+        send_bytes = send(con->trans[track_id].server_rtp_fd,
+            &(rtp->packet),rtp->rtpsize,0);
 
-            if (send_bytes == rtp->rtpsize) {
-                con->trans[track_id].rtcp_packet_cnt += 1;
-                con->trans[track_id].rtcp_octet += rtp->rtpsize;
-                return SUCCESS;
-            } else if(con->con_state != __CON_S_PLAYING) {
-                DBG("connection state changed before send\n");
-                return SUCCESS;
-            } else
-                usleep(5000);
-        } while (++attempts < 10 && 
-            send_bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK));
+        if (send_bytes == rtp->rtpsize) {
+            con->trans[track_id].rtcp_packet_cnt += 1;
+            con->trans[track_id].rtcp_octet += rtp->rtpsize;
+            return SUCCESS;
+        }
+
+        /* RTP over UDP is loss-tolerant: drop the packet rather than
+           stall the encoder thread behind a full socket buffer */
+        if (send_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return SUCCESS;
     }
-    
+
+    /* a dead client must not abort the fan-out to the others */
     ERR("send:%d:%s\n", send_bytes, strerror(errno));
-    return FAILURE;
+    con->stalled = 1;
+    return SUCCESS;
 }
 
 static inline int __rtp_send(struct nal_rtp_t *rtp, struct list_head_t *trans_list)
@@ -259,7 +259,7 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
     MUST(bufpool_attach(con->pool, con) == SUCCESS,
         return FAILURE);
 
-    if (con->con_state == __CON_S_PLAYING) {
+    if (con->con_state == __CON_S_PLAYING && !con->stalled) {
 
         ASSERT(bufpool_get_free(trans_set->h->transfer_pool, &trans) == SUCCESS, ({
             ERR("transfer object resource starvation detected. possibly connection limits are wrongfully setup\n");
@@ -392,8 +392,17 @@ static inline int __rtcp_poll(struct list_t *e, void *v)
     list_upcast(trans, e);
     MUST(con = trans->con, return FAILURE);
 
+    if (con->stalled || con->con_state != __CON_S_PLAYING) return SUCCESS;
+    if (!con->trans[*track_id].server_port_rtp && !con->trans[*track_id].is_tcp) return SUCCESS;
+
     if ((con->trans[*track_id].rtcp_tick)-- == 0) {
-        ASSERT(__rtcp_send_sr(con, *track_id) == SUCCESS, return FAILURE);
+        if (__rtcp_send_sr(con, *track_id) != SUCCESS) {
+            /* A TCP-interleaved SR failure means the data socket is dead, so
+               kick; a UDP SR failure only means the client has no RTCP
+               listener, so degrade RTCP for that session as before, not kick. */
+            if (con->trans[*track_id].is_tcp) con->stalled = 1;
+            return SUCCESS;
+        }
 
         /* postcondition check */
         DASSERT(con->trans[*track_id].rtcp_tick == 
