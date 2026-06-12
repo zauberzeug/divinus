@@ -88,14 +88,6 @@ int save_video_stream(char index, hal_vidstream *stream) {
         {
             char isH265 = chnState[index].payload == HAL_VIDCODEC_H265 ? 1 : 0;
 
-            if (app_config.mp4_enable) {
-                pthread_mutex_lock(&mp4Mtx);
-                send_mp4_to_client(index, stream, isH265);
-                if (recordOn) send_mp4_to_record(stream, isH265);
-                pthread_mutex_unlock(&mp4Mtx);
-
-                send_h26x_to_client(index, stream);
-            }
             if (app_config.rtsp_enable && rtspHandle)
                 rtp_send_h26x(rtspHandle, stream, isH265);
 
@@ -107,6 +99,15 @@ int save_video_stream(char index, hal_vidstream *stream) {
 
                     rtmp_ingest_video(&stream->pack[i], isH265);
                 }
+            }
+
+            if (app_config.mp4_enable) {
+                send_h26x_to_client(index, stream);
+
+                pthread_mutex_lock(&mp4Mtx);
+                send_mp4_to_client(index, stream, isH265);
+                if (recordOn) send_mp4_to_record(stream, isH265);
+                pthread_mutex_unlock(&mp4Mtx);
             }
             break;
         }

@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "bitbuf.h"
 
@@ -46,8 +47,7 @@ enum BufError try_to_realloc(struct BitBuf *ptr, const uint32_t min_size) {
 enum BufError put_skip(struct BitBuf *ptr, const uint32_t count) {
     chk_ptr uint32_t pos = ptr->offset + count;
     if (pos >= ptr->size)
-        chk_realloc for (uint32_t i = 0; i < count; i++)
-            ptr->buf[ptr->offset + i] = 0;
+        chk_realloc memset(ptr->buf + ptr->offset, 0, count);
     ptr->offset = pos;
     return BUF_OK;
 }
@@ -57,8 +57,7 @@ enum BufError put_to_offset(
     const uint32_t size) {
     chk_ptr uint32_t pos = offset + size;
     if (pos >= ptr->size)
-        chk_realloc for (uint32_t i = 0; i < size; i++) ptr->buf[offset + i] =
-            data[i];
+        chk_realloc if (size) memcpy(ptr->buf + offset, data, size);
     return BUF_OK;
 }
 enum BufError put(struct BitBuf *ptr, const char *data, const uint32_t size) {
@@ -215,9 +214,7 @@ enum BufError put_counted_str_to_offset(
     const uint32_t len) {
     chk_ptr uint32_t pos = offset + len + 1;
     if (pos >= ptr->size)
-        chk_realloc for (uint32_t i = 0; i < len + 1; i++) {
-            ptr->buf[offset + i] = str[i];
-        }
+        chk_realloc memcpy(ptr->buf + offset, str, len + 1);
     ptr->buf[pos] = 0;
     return BUF_OK;
 }

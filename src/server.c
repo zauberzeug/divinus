@@ -58,6 +58,7 @@ http_header_t http_headers[17] = {{"\0", "\0"}};
 int server_fd = -1;
 pthread_t server_thread_id;
 pthread_mutex_t client_fds_mutex;
+static int mp4_clients = 0;
 
 static bool is_local_address(const char *client_ip) {
     if (!client_ip) return false;
@@ -85,6 +86,8 @@ void free_client(int i) {
 
     close_socket_fd(client_fds[i].sockFd);
     client_fds[i].sockFd = -1;
+    if (client_fds[i].type == STREAM_MP4)
+        mp4_clients--;
 }
 
 /* Streams framed by Content-Length or chunk headers break irrecoverably on
@@ -231,6 +234,10 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
 }
 
 void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
+    /* mp4_set_slice is what drains the audio ingest buffer,
+       so the mux may only idle while audio is off */
+    if (!mp4_clients && !recordOn && !audioOn) return;
+
     for (unsigned int i = 0; i < stream->count; ++i) {
         hal_vidpack *pack = &stream->pack[i];
         unsigned char *pack_data = pack->data + pack->offset;
@@ -260,7 +267,8 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
             if (!client_fds[i].mp4.header_sent) {
                 struct BitBuf header_buf;
                 err = mp4_get_header(&header_buf);
-                chk_err_continue ssize_t len_size =
+                chk_err_continue if (!header_buf.offset) continue;
+                ssize_t len_size =
                     sprintf(len_buf, "%zX\r\n", header_buf.offset);
                 if (send_to_client(i, len_buf, len_size) < 0)
                     continue;
@@ -280,37 +288,30 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
 
             err = mp4_set_state(&client_fds[i].mp4);
             chk_err_continue {
-                struct BitBuf moof_buf;
+                struct BitBuf moof_buf, mdat_buf;
+                char mdat_len_buf[50];
                 err = mp4_get_moof(&moof_buf);
+                chk_err_continue err = mp4_get_mdat(&mdat_buf);
                 chk_err_continue ssize_t len_size =
                     sprintf(len_buf, "%zX\r\n", (ssize_t)moof_buf.offset);
+                ssize_t mdat_len_size =
+                    sprintf(mdat_len_buf, "%zX\r\n", (ssize_t)mdat_buf.offset);
 
-                struct iovec iov[3];
+                struct iovec iov[6];
                 iov[0].iov_base = len_buf;
                 iov[0].iov_len = len_size;
                 iov[1].iov_base = moof_buf.buf;
                 iov[1].iov_len = moof_buf.offset;
                 iov[2].iov_base = (void*)"\r\n";
                 iov[2].iov_len = 2;
+                iov[3].iov_base = mdat_len_buf;
+                iov[3].iov_len = mdat_len_size;
+                iov[4].iov_base = mdat_buf.buf;
+                iov[4].iov_len = mdat_buf.offset;
+                iov[5].iov_base = (void*)"\r\n";
+                iov[5].iov_len = 2;
 
-                if (sendv_to_client(i, iov, 3) < 0)
-                    continue;
-            }
-            {
-                struct BitBuf mdat_buf;
-                err = mp4_get_mdat(&mdat_buf);
-                chk_err_continue ssize_t len_size =
-                    sprintf(len_buf, "%zX\r\n", (ssize_t)mdat_buf.offset);
-
-                struct iovec iov[3];
-                iov[0].iov_base = len_buf;
-                iov[0].iov_len = len_size;
-                iov[1].iov_base = mdat_buf.buf;
-                iov[1].iov_len = mdat_buf.offset;
-                iov[2].iov_base = (void*)"\r\n";
-                iov[2].iov_len = 2;
-
-                if (sendv_to_client(i, iov, 3) < 0)
+                if (sendv_to_client(i, iov, 6) < 0)
                     continue;
             }
         }
@@ -786,6 +787,7 @@ void respond_request(http_request_t *req) {
                 client_fds[i].sockFd = req->clntFd;
                 client_fds[i].type = STREAM_MP4;
                 client_fds[i].mp4.header_sent = false;
+                mp4_clients++;
                 break;
             }
         pthread_mutex_unlock(&client_fds_mutex);
