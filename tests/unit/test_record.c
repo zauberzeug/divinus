@@ -185,6 +185,30 @@ static void assert_valid_segment(const char *path, int expect_moofs) {
     free(data);
 }
 
+/* Frames arriving before the first IDR (and its SPS/PPS) must not be
+   written: the muxer has no header yet, so the segment would start with
+   bare moof boxes and be unplayable. Must run before any test feeds an
+   IDR, while the muxer globals are still pristine as at process start. */
+static void test_no_fragments_before_first_idr(void) {
+    reset_config(scratch, "out.mp4");
+
+    record_start();
+    assert(recordOn);
+    feed_pack(0);
+    feed_pack(0);
+
+    char path[300];
+    snprintf(path, sizeof(path), "%s/out.mp4", scratch);
+    struct stat st;
+    assert(!stat(path, &st));
+    assert(st.st_size == 0); /* nothing until the header exists */
+
+    feed_pack(1);
+    record_stop();
+    assert_valid_segment(path, 1);
+    assert(!unlink(path));
+}
+
 static void test_no_rotation_below_size_threshold(void) {
     reset_config(scratch, "out.mp4");
     app_config.record_segment_size = 10 * 1024 * 1024;
@@ -242,6 +266,7 @@ int main(void) {
     test_trailing_slash_does_not_double();
     test_auto_name_lands_in_record_path();
     test_missing_dir_fails_with_clear_error();
+    test_no_fragments_before_first_idr();
     test_no_rotation_below_size_threshold();
     test_size_rotation_only_on_fragment_boundaries();
 

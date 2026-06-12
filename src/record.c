@@ -119,6 +119,9 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         if (!recordState.header_sent) {
             struct BitBuf header_buf;
             err = mp4_get_header(&header_buf); chk_err_continue
+            /* The muxer has no header until SPS/PPS arrive with the first
+               IDR; fragments written before it would be unplayable. */
+            if (!header_buf.offset) continue;
             recordSize += header_buf.offset;
             fwrite(header_buf.buf, 1, header_buf.offset, recordFile);
 
