@@ -12,7 +12,7 @@ Verifies that when all HTTP_MAX_CLIENTS (50) stream slots are taken:
   1. 50 /mjpeg clients register and stream (each gets a 200 + frames),
   2. the 51st /mjpeg request is refused with 503 and the socket is closed
      (EOF), instead of hanging with 200 headers and leaking the fd,
-  3. another endpoint (/video.264) is refused the same way (shared helper),
+  3. another endpoint (/video.26x) is refused the same way (shared helper),
   4. the 50 registered clients keep receiving data throughout,
   5. after all clients disconnect, the daemon's /proc/<pid>/fd count returns
      to baseline (no fd leak) and the PID is unchanged (no crash/respawn).
@@ -133,11 +133,14 @@ sock51.close()
 report("51st-mjpeg-503", "503" in status51 and eof51,
        f"status {status51!r}, EOF={'yes' if eof51 else 'NO (socket left hanging)'}")
 
-print("[3/5] /video.264 must be refused the same way...")
+print("[3/5] /video.26x must be refused the same way...")
 sock52, status52 = http_get("/video.264")
+if "404" in status52:  # camera configured for H.265
+    sock52.close()
+    sock52, status52 = http_get("/video.265")
 eof52, _ = read_to_eof(sock52)
 sock52.close()
-report("h264-503", "503" in status52 and eof52,
+report("h26x-503", "503" in status52 and eof52,
        f"status {status52!r}, EOF={'yes' if eof52 else 'NO (socket left hanging)'}")
 
 print("[4/5] registered clients must keep streaming...")
