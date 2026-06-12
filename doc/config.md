@@ -35,7 +35,7 @@ This document describes the fields that can be found within a configuration file
 - **flip**: Boolean to turn on image flipping (default: `false`).
 - **antiflicker**: Antiflicker setting in Hz (default: `60`).
 - **exposure**: Fixed sensor exposure time in microseconds, 0 restores auto exposure; lowers the framerate when the exposure time exceeds the frame interval (SigmaStar infinity6 only for now, default: `0`).
-- **level3dnr**: 3D noise reduction level from 0 to 7 (SigmaStar infinity6/6c/6e and Mercury6 only for now, default: `1`).
+- **level3dnr**: 3D noise reduction level from 0 to 7 (SigmaStar infinity6/6c/6e and Mercury6 only for now, default: `0`).
 
 ## mDNS section
 

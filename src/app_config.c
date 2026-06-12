@@ -271,7 +271,7 @@ enum ConfigError app_config_parse(void) {
     app_config.mirror = false;
     app_config.flip = false;
     app_config.antiflicker = 0;
-    app_config.level3dnr = 1;
+    app_config.level3dnr = 0;
 
     app_config.night_mode_enable = false;
     app_config.ir_sensor_pin = 999;
