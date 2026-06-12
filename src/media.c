@@ -764,9 +764,17 @@ int sdk_start(void) {
                 ret, errstr(ret));
     }
 
-    short width = MAX(app_config.mp4_width, app_config.mjpeg_width);
-    short height = MAX(app_config.mp4_height, app_config.mjpeg_height);
-    short framerate = MAX(app_config.mp4_fps, app_config.mjpeg_fps);
+    short width = MAX(app_config.mp4_enable ? app_config.mp4_width : 0,
+        app_config.mjpeg_enable ? app_config.mjpeg_width : 0);
+    short height = MAX(app_config.mp4_enable ? app_config.mp4_height : 0,
+        app_config.mjpeg_enable ? app_config.mjpeg_height : 0);
+    short framerate = MAX(app_config.mp4_enable ? app_config.mp4_fps : 0,
+        app_config.mjpeg_enable ? app_config.mjpeg_fps : 0);
+    if (!app_config.mp4_enable && !app_config.mjpeg_enable) {
+        width = 640;
+        height = 480;
+        framerate = 15;
+    }
 
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
