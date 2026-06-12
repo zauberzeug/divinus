@@ -49,7 +49,7 @@ void record_start(void) {
     if (recordPath[strlen(recordPath) - 1] != '/')
         strncat(recordPath, "/", sizeof(recordPath) - strlen(recordPath) - 1);
 
-    char fileName[160];
+    char fileName[128];
     if (!EMPTY(app_config.record_filename)) {
         strncpy(fileName, app_config.record_filename, sizeof(fileName) - 1);
         fileName[sizeof(fileName) - 1] = '\0';
@@ -57,7 +57,8 @@ void record_start(void) {
         char tempName[160];
         struct tm tm_buf, *tm_info = localtime_r(&recordStartTime, &tm_buf);
         sprintf(tempName, "recording_%s.mp4", timefmt);
-        strftime(fileName, sizeof(fileName), tempName, tm_info);
+        if (!strftime(fileName, sizeof(fileName), tempName, tm_info))
+            fileName[0] = '\0';
     }
     strncat(recordPath, fileName, sizeof(recordPath) - strlen(recordPath) - 1);
 
