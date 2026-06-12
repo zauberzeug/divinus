@@ -5,6 +5,10 @@
 #define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
 #define HTTP_SEND_POLL_MS 25
 #define HTTP_SEND_POLL_TRIES 4
+#define HTTP_SEND_DEADLINE_MS 33
+/* Caps kernel send buffering so a lagging receiver hits EAGAIN within a
+   couple of frames instead of accumulating seconds of stale video */
+#define HTTP_SNDBUF_SIZE (256 * 1024)
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -90,13 +94,26 @@ void free_client(int i) {
         mp4_clients--;
 }
 
+/* Clips poll waits to what remains of the per-call deadline, -1 once spent:
+   partial progress must not extend the time a receiver may hold the sender */
+static int send_poll_timeout(const struct timespec *start) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long left = HTTP_SEND_DEADLINE_MS - (now.tv_sec - start->tv_sec) * 1000 -
+        (now.tv_nsec - start->tv_nsec) / 1000000;
+    if (left <= 0) return -1;
+    return left < HTTP_SEND_POLL_MS ? (int)left : HTTP_SEND_POLL_MS;
+}
+
 /* Streams framed by Content-Length or chunk headers break irrecoverably on
    a short write, so never return success before the full buffer is out:
    wait briefly for slow receivers, fail those that cannot keep up */
 int send_to_fd(int fd, char *buf, ssize_t size) {
     ssize_t sent = 0;
     int tries = 0;
+    struct timespec start;
     if (fd < 0) return -1;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
     while (sent < size) {
         ssize_t n = send(fd, buf + sent, size - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
@@ -109,8 +126,9 @@ int send_to_fd(int fd, char *buf, ssize_t size) {
             continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
             tries++ < HTTP_SEND_POLL_TRIES) {
+            int timeout = send_poll_timeout(&start);
             struct pollfd pfd = {.fd = fd, .events = POLLOUT};
-            if (poll(&pfd, 1, HTTP_SEND_POLL_MS) > 0)
+            if (timeout >= 0 && poll(&pfd, 1, timeout) > 0)
                 continue;
         }
         return -1;
@@ -122,17 +140,21 @@ int send_to_fd(int fd, char *buf, ssize_t size) {
 int sendv_to_client(int i, struct iovec *iov, int iovcnt) {
     int fd = client_fds[i].sockFd;
     int tries = 0;
+    struct timespec start;
     if (fd < 0) return -1;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
     while (iovcnt > 0) {
-        ssize_t n = writev(fd, iov, iovcnt);
+        struct msghdr msg = {.msg_iov = iov, .msg_iovlen = iovcnt};
+        ssize_t n = sendmsg(fd, &msg, MSG_DONTWAIT | MSG_NOSIGNAL);
         if (n <= 0) {
             if (n < 0 && errno == EINTR)
                 continue;
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
                 tries++ < HTTP_SEND_POLL_TRIES) {
+                int timeout = send_poll_timeout(&start);
                 struct pollfd pfd = {.fd = fd, .events = POLLOUT};
-                if (poll(&pfd, 1, HTTP_SEND_POLL_MS) > 0)
+                if (timeout >= 0 && poll(&pfd, 1, timeout) > 0)
                     continue;
             }
             free_client(i);
@@ -1620,6 +1642,10 @@ void *server_thread(void *vargp) {
                 int flag = 1;
                 if (setsockopt(clntFd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0)
                     HAL_WARNING("server", "setsockopt(TCP_NODELAY) failed");
+                int sndbuf = HTTP_SNDBUF_SIZE;
+                if (setsockopt(clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+                    HAL_WARNING("server", "setsockopt(SO_SNDBUF) failed");
+                fcntl(clntFd, F_SETFD, FD_CLOEXEC);
                 fcntl(clntFd, F_SETFL, fcntl(clntFd, F_GETFL, 0) | O_NONBLOCK);
                 int i = 0;
                 for (i = 0; i < HTTP_MAX_CLIENTS; i++) {
@@ -1750,7 +1776,7 @@ int server_start() {
     }
     pthread_mutex_init(&client_fds_mutex, NULL);
 
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    server_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 
     {
         pthread_attr_t thread_attr;
