@@ -14,6 +14,7 @@ BINS  := $(addprefix unit/,$(TESTS))
 # Per-test source dependencies (besides the test file itself).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
 test_sock_send_SRC := $(SRCDIR)/sock_send.c
+test_multipart_SRC := $(SRCDIR)/fmt/multipart.c $(SRCDIR)/sock_send.c
 
 .PHONY: all clean
 all: $(BINS)
