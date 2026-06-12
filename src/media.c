@@ -112,40 +112,13 @@ int save_video_stream(char index, hal_vidstream *stream) {
             break;
         }
         case HAL_VIDCODEC_MJPG:
-            if (app_config.mjpeg_enable) {
-                static char *mjpeg_buf;
-                static ssize_t mjpeg_buf_size = 0;
-                ssize_t buf_size = 0;
-                for (unsigned int i = 0; i < stream->count; i++) {
-                    hal_vidpack *data = &stream->pack[i];
-                    ssize_t need_size = buf_size + data->length - data->offset + 2;
-                    if (need_size > mjpeg_buf_size)
-                        mjpeg_buf = realloc(mjpeg_buf, mjpeg_buf_size = need_size);
-                    memcpy(mjpeg_buf + buf_size, data->data + data->offset,
-                        data->length - data->offset);
-                    buf_size += data->length - data->offset;
-                }
-                send_mjpeg_to_client(index, mjpeg_buf, buf_size);
-            }
+            if (app_config.mjpeg_enable)
+                send_mjpeg_to_client(index, stream);
             break;
         case HAL_VIDCODEC_JPG:
-        {
-            static char *jpeg_buf;
-            static ssize_t jpeg_buf_size = 0;
-            ssize_t buf_size = 0;
-            for (unsigned int i = 0; i < stream->count; i++) {
-                hal_vidpack *data = &stream->pack[i];
-                ssize_t need_size = buf_size + data->length - data->offset + 2;
-                if (need_size > jpeg_buf_size)
-                    jpeg_buf = realloc(jpeg_buf, jpeg_buf_size = need_size);
-                memcpy(jpeg_buf + buf_size, data->data + data->offset,
-                    data->length - data->offset);
-                buf_size += data->length - data->offset;
-            }
             if (app_config.jpeg_enable)
-                send_jpeg_to_client(index, jpeg_buf, buf_size);
+                send_jpeg_to_client(index, stream);
             break;
-        }
         default:
             return EXIT_FAILURE;
     }

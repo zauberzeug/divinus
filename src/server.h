@@ -36,8 +36,8 @@ extern time_t recordStartTime;
 int server_start();
 int server_stop();
 
-void send_jpeg_to_client(char index, char *buf, ssize_t size);
-void send_mjpeg_to_client(char index, char *buf, ssize_t size);
+void send_jpeg_to_client(char index, hal_vidstream *stream);
+void send_mjpeg_to_client(char index, hal_vidstream *stream);
 void send_h26x_to_client(char index, hal_vidstream *stream);
 void send_mp3_to_client(char *buf, ssize_t size);
 void send_mp4_to_client(char index, hal_vidstream *stream, char isH265);

@@ -1,4 +1,5 @@
 #include "server.h"
+#include "fmt/multipart.h"
 #include "sock_send.h"
 
 #define HTTP_MAX_CLIENTS 50
@@ -415,14 +416,12 @@ void send_pcm_to_client(hal_audframe *frame) {
     pthread_mutex_unlock(&client_fds_mutex);
 }
 
-void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
-    static char prefix_buf[128];
+void send_mjpeg_to_client(char index, hal_vidstream *stream) {
+    char prefix_buf[128];
     ssize_t prefix_size = sprintf(prefix_buf,
         "--boundarydonotcross\r\n"
         "Content-Type:image/jpeg\r\n"
-        "Content-Length: %lu\r\n\r\n", size);
-    buf[size++] = '\r';
-    buf[size++] = '\n';
+        "Content-Length: %zu\r\n\r\n", multipart_payload_size(stream));
 
     pthread_mutex_lock(&client_fds_mutex);
     for (unsigned int i = 0; i < HTTP_MAX_CLIENTS; ++i) {
@@ -432,12 +431,12 @@ void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
         /* Complete-or-skip per frame: backpressure lowers a slow client's
            frame rate instead of disconnecting it, a started multipart part
            always finishes (no torn JPEG), and the venc thread never waits
-           on a lagging receiver */
-        struct iovec iov[2] = {
-            {.iov_base = prefix_buf, .iov_len = (size_t)prefix_size},
-            {.iov_base = buf, .iov_len = (size_t)size}
-        };
-        switch (sock_send_frame_or_skip(client_fds[i].sockFd, iov, 2)) {
+           on a lagging receiver. The payload iovecs point into the encoder
+           buffer (safe: the send finishes before the HAL frees the stream)
+           and are clobbered by the send, so rebuild them per client */
+        struct iovec iov[stream->count + 2];
+        int iovcnt = multipart_part_iov(iov, prefix_buf, (size_t)prefix_size, stream);
+        switch (sock_send_frame_or_skip(client_fds[i].sockFd, iov, iovcnt)) {
             case SOCK_SEND_SENT:
                 client_fds[i].skipCnt = 0;
                 break;
@@ -454,26 +453,24 @@ void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
     pthread_mutex_unlock(&client_fds_mutex);
 }
 
-void send_jpeg_to_client(char index, char *buf, ssize_t size) {
-    static char prefix_buf[128];
+void send_jpeg_to_client(char index, hal_vidstream *stream) {
+    char prefix_buf[128];
     ssize_t prefix_size = sprintf(
         prefix_buf,
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: image/jpeg\r\n"
-        "Content-Length: %lu\r\n"
-        "Connection: close\r\n\r\n", size);
-    buf[size++] = '\r';
-    buf[size++] = '\n';
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n\r\n", multipart_payload_size(stream));
 
     pthread_mutex_lock(&client_fds_mutex);
     for (unsigned int i = 0; i < HTTP_MAX_CLIENTS; ++i) {
         if (client_fds[i].sockFd < 0) continue;
         if (client_fds[i].type != STREAM_JPEG) continue;
 
-        if (send_to_client(i, prefix_buf, prefix_size) < 0)
-            continue; // send <SIZE>\r\n
-        if (send_to_client(i, buf, size) < 0)
-            continue; // send <DATA>\r\n
+        struct iovec iov[stream->count + 2];
+        int iovcnt = multipart_part_iov(iov, prefix_buf, (size_t)prefix_size, stream);
+        if (sendv_to_client(i, iov, iovcnt) < 0)
+            continue;
         free_client(i);
     }
     pthread_mutex_unlock(&client_fds_mutex);
