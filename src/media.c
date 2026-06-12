@@ -325,6 +325,7 @@ int create_channel(char index, short width, short height, char framerate, char j
             app_config.mirror, app_config.flip);
 #endif
     }
+    return EXIT_FAILURE;
 }
 
 int bind_channel(char index, char framerate, char jpeg) {
@@ -347,6 +348,7 @@ int bind_channel(char index, char framerate, char jpeg) {
         case HAL_PLATFORM_CVI: return cvi_channel_bind(index);
 #endif
     }
+    return EXIT_FAILURE;
 }
 
 int unbind_channel(char index, char jpeg) {
@@ -369,6 +371,8 @@ int unbind_channel(char index, char jpeg) {
         case HAL_PLATFORM_CVI: return cvi_channel_unbind(index);
 #endif
     }
+    // Unmatched platform: nothing was bound, so teardown is a no-op
+    return 0;
 }
 
 int media_video_disable(char index, char jpeg) {
@@ -658,7 +662,7 @@ int media_mp4_enable(void) {
 }
 
 int sdk_start(void) {
-    int ret;
+    int ret = EXIT_SUCCESS;
 
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
@@ -679,6 +683,7 @@ int sdk_start(void) {
 #elif defined(__riscv) || defined(__riscv__)
         case HAL_PLATFORM_CVI: ret = cvi_hal_init(); break;
 #endif
+        default: HAL_ERROR("media", "Unsupported platform!\n");
     }
     if (ret)
         HAL_ERROR("media", "HAL initialization failed with %#x!\n%s\n",

@@ -59,10 +59,9 @@ int http_post_send(hal_jpegdata *jpeg) {
             char replay[1024];
             int len = read(sockfd, replay, 1024);
         }
-
-        close(sockfd);
     }
 
+    close(sockfd);
     if (server_addr) freeaddrinfo(server_addr);
 
     return EXIT_SUCCESS;

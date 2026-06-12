@@ -838,6 +838,11 @@ void respond_request(http_request_t *req) {
     if (app_config.jpeg_enable && STARTS_WITH(req->uri, "/image.jpg")) {
         {
             struct jpegtask *task = malloc(sizeof(struct jpegtask));
+            if (!task) {
+                HAL_DANGER("jpeg", "Can't allocate a snapshot task\n");
+                send_http_error(req->clntFd, 500);
+                return;
+            }
             task->client_fd = req->clntFd;
             task->width = app_config.jpeg_width;
             task->height = app_config.jpeg_height;
@@ -1688,7 +1693,16 @@ void *server_thread(void *vargp) {
                             req->input = NULL;
                             continue;
                         }
-                        req->input = realloc(req->input, req->buf_size + 1);
+                        char *enlarged = realloc(req->input, req->buf_size + 1);
+                        if (!enlarged) {
+                            HAL_DANGER("server", "Can't grow the request buffer, dropping client\n");
+                            close_socket_fd(req->clntFd);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                            continue;
+                        }
+                        req->input = enlarged;
                     }
 
                     int received = recv(req->clntFd, req->input + req->total, req->buf_size - req->total, 0);

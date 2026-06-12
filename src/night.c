@@ -53,7 +53,7 @@ void *night_thread(void) {
         fd_set adc_fds;
         int cnt = 0, tmp = 0, val;
 
-        if ((adc_fd = open(app_config.adc_device, O_RDONLY | O_NONBLOCK)) <= 0) {
+        if ((adc_fd = open(app_config.adc_device, O_RDONLY | O_NONBLOCK)) < 0) {
             HAL_DANGER("night", "Could not open the ADC virtual device!\n");
             return NULL;
         }
@@ -70,7 +70,7 @@ void *night_thread(void) {
             }
             usleep(app_config.check_interval_s * 1000000 / 12);
         }
-        if (adc_fd) close(adc_fd);
+        close(adc_fd);
     } else if (app_config.ir_sensor_pin == 999) {
         while (keepRunning) sleep(1);
     } else {

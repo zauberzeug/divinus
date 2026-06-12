@@ -69,6 +69,7 @@ void *onvif_thread(void) {
 
     if (bind(servfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
         HAL_DANGER("onvif", "Failed to bind socket!\n");
+        close(servfd);
         return (void*)EXIT_FAILURE;
     }
 
@@ -183,8 +184,10 @@ bool onvif_validate_soap_auth(const char *soap_data) {
 
     if (!(start = strstr(soap_data, pass_tag)) ||
         !(start += strlen(pass_tag))) return false;
-    if ((pos = strstr(start, type_attr)) < (start = strchr(start, '>')) &&
-        (pos += strlen(type_attr)) && strstr(pos, digest_tag)) digest = 1;
+    pos = strstr(start, type_attr);
+    if (!(start = strchr(start, '>'))) return false;
+    if (pos && pos < start &&
+        strstr(pos + strlen(type_attr), digest_tag)) digest = 1;
     if (!(end = strstr(start, "</Password>"))) return false;
     memcpy(pass, ++start, end - start);
     pass[end - start] = '\0';

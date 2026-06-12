@@ -135,6 +135,10 @@ void text_new_rendered(SFT_Image *image, int width, int height, int color)
     image->pixels = pixels;
     image->width = width;
     image->height = height;
+    if (!pixels) {
+        HAL_DANGER("text", "Allocating a %dx%d canvas failed!\n", width, height);
+        return;
+    }
     if (color == 0)
         memset(pixels, 0, size);
     else for (int i = 0; i < size / 2; i++)
@@ -162,7 +166,8 @@ void text_dim_rendered(double *margin, double *height, double *width, const char
         SFT_UChar cp = (SFT_UChar)cps[k];
         SFT_Glyph gid;
         SFT_GMetrics mtx;
-        text_load_glyph(&sft, cp, &gid, &mtx);
+        if (text_load_glyph(&sft, cp, &gid, &mtx))
+            continue;
         if (lwidth == 0 && mtx.leftSideBearing < 0 && *margin < -mtx.leftSideBearing)
             *margin -= mtx.leftSideBearing;
         lwidth += MAX(mtx.advanceWidth, mtx.minWidth);
@@ -179,6 +184,11 @@ hal_bitmap text_create_rendered(const char *font, double size, const char *text,
     double margin, height, width;
     text_dim_rendered(&margin, &height, &width, text);
     text_new_rendered(&canvas, (CEILING(width) + 3) & ~3, CEILING(height), 0);
+    if (!canvas.pixels) {
+        bitmap.dim.width = bitmap.dim.height = 0;
+        bitmap.data = NULL;
+        return bitmap;
+    }
 
     unsigned cps[strlen(text) + 1];
     int n = utf8_to_utf32(text, cps, strlen(text) + 1);
@@ -201,8 +211,11 @@ hal_bitmap text_create_rendered(const char *font, double size, const char *text,
         SFT_Glyph gid;
         SFT_GMetrics mtx;
         SFT_Kerning kerning;
-        text_load_glyph(&sft, cp, &gid, &mtx);
+        if (text_load_glyph(&sft, cp, &gid, &mtx))
+            continue;
         text_new_rendered(&image, mtx.minWidth, mtx.minHeight, 0);
+        if (!image.pixels)
+            continue;
         sft_render(&sft, gid, image);
         sft_kerning(&sft, ogid, gid, &kerning);
 

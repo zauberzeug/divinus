@@ -452,20 +452,12 @@ static inline void threadpool_delete(threadpool_handle h)
 static inline threadpool_handle threadpool_create(void *argsp)
 {
     threadpool_handle nh = NULL;
-    shared_interface *sharedp;
-    rendezvous_obj  *rv_init;
-    rendezvous_obj  *rv_cleanup;
 
     TALLOC(nh,return NULL);
-    TALLOC(sharedp,goto error);
-    TALLOC(rv_init,goto error);
-    TALLOC(rv_cleanup,goto error);
-    TALLOC(rv_cleanup,goto error);
+    TALLOC(nh->sharedp,goto error);
 
-
-    ASSERT(sharedp->rv_init = rendezvous_create(1), goto error);
-    ASSERT(sharedp->rv_cleanup = rendezvous_create(1), goto error);
-    nh->sharedp = sharedp;
+    ASSERT(nh->sharedp->rv_init = rendezvous_create(1), goto error);
+    ASSERT(nh->sharedp->rv_cleanup = rendezvous_create(1), goto error);
 
     nh->sharedp->param_shared = argsp;
     ASSERT(nh->sharedp->gbl = gbl_create(), goto error);
