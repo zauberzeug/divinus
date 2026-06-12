@@ -1,5 +1,7 @@
 #include "record.h"
 
+#include <errno.h>
+
 static FILE *recordFile;
 static struct Mp4State recordState;
 static int recordSize;
@@ -47,18 +49,21 @@ void record_start(void) {
     if (recordPath[strlen(recordPath) - 1] != '/')
         strncat(recordPath, "/", sizeof(recordPath) - strlen(recordPath) - 1);
 
+    char fileName[160];
     if (!EMPTY(app_config.record_filename)) {
-        strncpy(recordPath, app_config.record_filename, sizeof(recordPath) - 1);
-        recordPath[sizeof(recordPath) - 1] = '\0';
+        strncpy(fileName, app_config.record_filename, sizeof(fileName) - 1);
+        fileName[sizeof(fileName) - 1] = '\0';
     } else {
         char tempName[160];
         struct tm tm_buf, *tm_info = localtime_r(&recordStartTime, &tm_buf);
         sprintf(tempName, "recording_%s.mp4", timefmt);
-        strftime(recordPath, sizeof(recordPath), tempName, tm_info);
+        strftime(fileName, sizeof(fileName), tempName, tm_info);
     }
+    strncat(recordPath, fileName, sizeof(recordPath) - strlen(recordPath) - 1);
 
     if (!(recordFile = fopen(recordPath, "wb"))) {
-        HAL_DANGER("record", "Failed to open the destination file!\n");
+        HAL_DANGER("record", "Failed to open the destination file %s: %s\n",
+            recordPath, strerror(errno));
         return;
     }
 

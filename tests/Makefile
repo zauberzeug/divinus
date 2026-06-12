@@ -13,14 +13,17 @@ BINS  := $(addprefix unit/,$(TESTS))
 
 # Per-test source dependencies (besides the test file itself).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
+test_record_SRC := $(SRCDIR)/record.c $(SRCDIR)/fmt/mp4.c $(SRCDIR)/fmt/bitbuf.c \
+                   $(SRCDIR)/fmt/moof.c $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/nal.c
 
 .PHONY: all clean
 all: $(BINS)
 	@fail=0; for t in $(BINS); do echo "== $$t =="; ./$$t || fail=1; done; \
 	[ $$fail -eq 0 ] && echo "all unit tests passed" || { echo "UNIT TESTS FAILED"; exit 1; }
 
-unit/%: unit/%.c
-	$(CC) $(CFLAGS) -o $@ $< $($*_SRC) $(LDFLAGS)
+.SECONDEXPANSION:
+unit/%: unit/%.c $$($$*_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f $(BINS)
