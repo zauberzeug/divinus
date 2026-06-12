@@ -707,6 +707,13 @@ void i6_video_request_idr(char index)
 int i6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
 {
     int ret;
+    char gotStream = 0;
+    i6_venc_stat stat;
+    i6_venc_strm strm;
+    i6_venc_pack packs[8];
+
+    memset(&stat, 0, sizeof(stat));
+    memset(&strm, 0, sizeof(strm));
 
     if (ret = i6_channel_bind(index, 1)) {
         HAL_DANGER("i6_venc", "Binding the encoder channel "
@@ -752,7 +759,6 @@ int i6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
     }
 
     if (FD_ISSET(fd, &readFds)) {
-        i6_venc_stat stat;
         if (ret = i6_venc.fnQuery(index, &stat)) {
             HAL_DANGER("i6_venc", "Querying the encoder channel "
                 "%d failed with %#x!\n", index, ret);
@@ -764,9 +770,6 @@ int i6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
             goto abort;
         }
 
-        i6_venc_strm strm;
-        memset(&strm, 0, sizeof(strm));
-        i6_venc_pack packs[8];
         if (stat.curPacks > 8)
             strm.packet = (i6_venc_pack*)malloc(sizeof(i6_venc_pack) * stat.curPacks);
         else
@@ -785,6 +788,7 @@ int i6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
             strm.packet = NULL;
             goto abort;
         }
+        gotStream = 1;
 
         {
             jpeg->jpegSize = 0;
@@ -802,8 +806,10 @@ int i6_video_snapshot_grab(char index, char quality, hal_jpegdata *jpeg)
                 jpeg->jpegSize += packLen;
             }
         }
+    }
 
 abort:
+    if (gotStream) {
         i6_venc.fnFreeStream(index, &strm);
         if (stat.curPacks > 8) free(strm.packet);
     }
