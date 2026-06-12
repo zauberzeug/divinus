@@ -16,12 +16,14 @@ trap 'rm -f "$log" "$log.norm" "$log.base"' EXIT
 make clean >/dev/null 2>&1 || true
 # fd-phase-mismatch is disabled: gcc 13's fd-state checker misreads the plain
 # socket → setsockopt → bind/listen/connect sequence and flags every such site.
-make CC="${CC:-gcc}" OPT='-O2 -lm -fanalyzer -Wno-analyzer-fd-phase-mismatch' >"$log" 2>&1 || true
+# -lpthread: the conda sysroot glibc predates the libpthread merge. The build
+# must succeed — a partial build silently drops every finding past the failure.
+if ! make CC="${CC:-gcc}" OPT='-O2 -lm -lpthread -fanalyzer -Wno-analyzer-fd-phase-mismatch' >"$log" 2>&1; then
+    echo "analyze build failed:"
+    tail -20 "$log"
+    exit 1
+fi
 make clean >/dev/null 2>&1 || true
-
-# Guard against a vacuous pass: a build that dies before compiling anything
-# produces no warnings and would sail through the baseline comparison.
-grep -q -- '-fanalyzer' "$log" || { echo "analyze build ran no compile steps:"; tail "$log"; exit 1; }
 
 # Normalize to "<file>: <message> [-Wanalyzer-...]" (drop line:col so the
 # baseline is robust to unrelated edits), excluding system headers (absolute
