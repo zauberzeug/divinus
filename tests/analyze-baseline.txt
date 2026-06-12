@@ -1,0 +1,3 @@
+rtsp/common.h: leak of ‘rv_cleanup’ [CWE-401] [-Wanalyzer-malloc-leak]
+rtsp/common.h: leak of ‘rv_init’ [CWE-401] [-Wanalyzer-malloc-leak]
+server.c: leak of ‘reqs[i].input’ [CWE-401] [-Wanalyzer-malloc-leak]

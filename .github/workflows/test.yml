@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests (host-native, ASan/UBSan)
+        run: make -C tests
+
+  analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: gcc -fanalyzer (gating, vs baseline)
+        run: sh tests/analyze.sh
+      - name: cppcheck (informational until triaged)
+        continue-on-error: true
+        run: |
+          sudo apt-get update && sudo apt-get install -y cppcheck
+          cppcheck --enable=warning,portability --inline-suppr \
+            --suppress='*:src/lib/*' --error-exitcode=1 src
