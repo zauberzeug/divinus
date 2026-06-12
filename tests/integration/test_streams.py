@@ -9,10 +9,12 @@ Hardware-gated (needs a reachable camera), so it is NOT run in CI — run it by
 hand before shipping any stream-path change.
 
 Verifies against a live camera that
-  1. MJPEG frames arrive complete (no truncated/torn JPEGs) for a fast consumer,
-  2. MJPEG frames arrive complete for a SLOW consumer (the backpressure case that
-     used to produce green half-frames; being disconnected by the server is
-     acceptable, receiving a torn frame is not),
+  1. MJPEG frames arrive complete (no truncated/torn JPEGs) for a fast consumer
+     over a SUSTAINED run (>= 30 s: the historical fast-client kick fired at
+     ~10 s, after a short check had already passed),
+  2. a SLOW MJPEG consumer is NOT disconnected (policy 2026-06-12: backpressure
+     skips frames, it never terminates a live client) and receives only
+     complete JPEGs — fewer frames per second is fine and expected,
   3. RTSP delivers decodable H26x video over TCP and UDP transport (ffmpeg),
   4. the fMP4 HTTP stream decodes (bonus, same writev path as /video.26x).
 
@@ -40,22 +42,21 @@ def report(name: str, ok: bool, detail: str) -> None:
     print(f"  {'PASS' if ok else 'FAIL'}  {name}: {detail}")
 
 
-def read_mjpeg_frames(n_frames: int, recv_size: int, delay_s: float, timeout_s: float = 30.0):
-    """Yield (content_length, jpeg_bytes) parts from /mjpeg; small recv_size plus
-    delay simulates a slow consumer building TCP backpressure."""
+def read_mjpeg_frames(duration_s: float, recv_size: int, delay_s: float):
+    """Yield (content_length, jpeg_bytes) parts from /mjpeg for duration_s;
+    a small recv_size plus delay throttles the drain rate to simulate a slow
+    consumer building steady TCP backpressure."""
     sock = socket.create_connection((CAM, 80), timeout=10)
     sock.sendall(f"GET /mjpeg HTTP/1.1\r\nHost: {CAM}\r\nConnection: keep-alive\r\n\r\n".encode())
     buf = b""
-    deadline = time.monotonic() + timeout_s
+    deadline = time.monotonic() + duration_s
     got = 0
     try:
-        while got < n_frames:
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"only {got}/{n_frames} frames before timeout")
+        while time.monotonic() < deadline:
             try:
                 chunk = sock.recv(recv_size)
             except socket.timeout:
-                raise ConnectionError(f"recv timeout after {got} frames")
+                raise ConnectionError(f"recv timeout (no data for 10 s) after {got} frames")
             if not chunk:
                 raise ConnectionError(f"server closed connection after {got} frames")
             buf += chunk
@@ -80,8 +81,6 @@ def read_mjpeg_frames(n_frames: int, recv_size: int, delay_s: float, timeout_s: 
                 buf = buf[body_start + clen :]
                 got += 1
                 yield clen, body
-                if got >= n_frames:
-                    return
     finally:
         sock.close()
 
@@ -102,25 +101,32 @@ def check_jpeg(body: bytes, clen: int) -> str | None:
     return None
 
 
-def test_mjpeg(name: str, n_frames: int, recv_size: int, delay_s: float) -> None:
+def test_mjpeg(name: str, duration_s: float, recv_size: int, delay_s: float,
+               min_frames: int) -> None:
+    """The server must never disconnect a live MJPEG client — a slow one gets
+    fewer frames (frame-granular skipping), not a termination — and every
+    delivered JPEG must be complete."""
     torn, sizes = [], []
     disconnected = ""
+    t0 = time.monotonic()
     try:
-        for clen, body in read_mjpeg_frames(n_frames, recv_size, delay_s):
+        for clen, body in read_mjpeg_frames(duration_s, recv_size, delay_s):
             sizes.append(clen)
             err = check_jpeg(body, clen)
             if err:
                 torn.append(f"frame {len(sizes)}: {err}")
     except (ConnectionError, TimeoutError) as e:
-        disconnected = f" ({e})"
+        disconnected = f"disconnected after {time.monotonic() - t0:.1f}s: {e}"
     n = len(sizes)
-    detail = f"{n} frames, avg {sum(sizes) // max(n, 1)} B{disconnected}"
-    if torn:
+    elapsed = max(time.monotonic() - t0, 0.001)
+    detail = f"{n} frames in {elapsed:.1f}s ({n / elapsed:.1f} fps), avg {sum(sizes) // max(n, 1)} B"
+    if disconnected:
+        report(name, False, f"{detail}; {disconnected}")
+    elif torn:
         report(name, False, f"{detail}; TORN: {'; '.join(torn[:3])}")
-    elif n == 0:
-        report(name, False, f"no frames received{disconnected}")
+    elif n < min_frames:
+        report(name, False, f"{detail}; expected >= {min_frames} frames")
     else:
-        # slow consumer: being kicked is fine, torn frames are not
         report(name, True, detail)
 
 
@@ -179,12 +185,12 @@ def wanted(name: str) -> bool:
 print(f"=== divinus stream integrity tests against {CAM} ===")
 
 if wanted("mjpeg-fast"):
-    print("[1/5] MJPEG, fast consumer (64 KiB reads, no delay)...")
-    test_mjpeg("mjpeg-fast", n_frames=50, recv_size=65536, delay_s=0)
+    print("[1/5] MJPEG, fast consumer (64 KiB reads, no delay, 30 s sustained)...")
+    test_mjpeg("mjpeg-fast", duration_s=30.0, recv_size=65536, delay_s=0, min_frames=200)
 
 if wanted("mjpeg-slow"):
-    print("[2/5] MJPEG, slow consumer (4 KiB reads, 20 ms delay -> backpressure)...")
-    test_mjpeg("mjpeg-slow", n_frames=15, recv_size=4096, delay_s=0.02)
+    print("[2/5] MJPEG, slow consumer (8 KiB reads, 10 ms delay -> steady ~0.8 MB/s drain)...")
+    test_mjpeg("mjpeg-slow", duration_s=20.0, recv_size=8192, delay_s=0.01, min_frames=5)
 
 if wanted("rtsp-tcp"):
     print("[3/5] RTSP over TCP...")
