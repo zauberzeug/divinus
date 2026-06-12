@@ -16,6 +16,7 @@ isp:
   mirror: false
   flip: false
   antiflicker: 60
+  level3dnr: 0
 
 osd:
   enable: true
