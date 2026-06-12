@@ -1,4 +1,5 @@
 #include "server.h"
+#include "sock_send.h"
 
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
@@ -9,6 +10,13 @@
 /* Caps kernel send buffering so a lagging receiver hits EAGAIN within a
    couple of frames instead of accumulating seconds of stale video */
 #define HTTP_SNDBUF_SIZE (256 * 1024)
+/* MJPEG clients instead get complete-or-skip frame sends, which need the
+   whole JPEG (can exceed 512 KiB at 4K) to fit the send buffer at once;
+   staleness is bounded by the frame fit check, not the buffer size */
+#define HTTP_MJPEG_SNDBUF_SIZE (1024 * 1024)
+/* One log line (not one per frame) once an MJPEG client has been skipped
+   this many frames in a row */
+#define MJPEG_SKIP_LOG_THRESHOLD 100
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -37,6 +45,7 @@ struct {
     enum StreamType type;
     struct Mp4State mp4;
     unsigned int nalCnt;
+    unsigned int skipCnt;
 } client_fds[HTTP_MAX_CLIENTS];
 
 typedef struct {
@@ -224,6 +233,7 @@ static bool register_stream_client(int sockFd, enum StreamType type,
         client_fds[i].sockFd = sockFd;
         client_fds[i].type = type;
         client_fds[i].nalCnt = 0;
+        client_fds[i].skipCnt = 0;
         client_fds[i].mp4.header_sent = false;
         if (type == STREAM_MP4)
             mp4_clients++;
@@ -419,10 +429,27 @@ void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
         if (client_fds[i].sockFd < 0) continue;
         if (client_fds[i].type != STREAM_MJPEG) continue;
 
-        if (send_to_client(i, prefix_buf, prefix_size) < 0)
-            continue; // send <SIZE>\r\n
-        if (send_to_client(i, buf, size) < 0)
-            continue; // send <DATA>\r\n
+        /* Complete-or-skip per frame: backpressure lowers a slow client's
+           frame rate instead of disconnecting it, a started multipart part
+           always finishes (no torn JPEG), and the venc thread never waits
+           on a lagging receiver */
+        struct iovec iov[2] = {
+            {.iov_base = prefix_buf, .iov_len = (size_t)prefix_size},
+            {.iov_base = buf, .iov_len = (size_t)size}
+        };
+        switch (sock_send_frame_or_skip(client_fds[i].sockFd, iov, 2)) {
+            case SOCK_SEND_SENT:
+                client_fds[i].skipCnt = 0;
+                break;
+            case SOCK_SEND_SKIPPED:
+                if (++client_fds[i].skipCnt == MJPEG_SKIP_LOG_THRESHOLD)
+                    HAL_INFO("server", "MJPEG client %u is not keeping up, "
+                        "%u consecutive frames skipped\n", i, client_fds[i].skipCnt);
+                break;
+            case SOCK_SEND_DEAD:
+                free_client(i);
+                break;
+        }
     }
     pthread_mutex_unlock(&client_fds_mutex);
 }
@@ -810,6 +837,12 @@ void respond_request(http_request_t *req) {
     }
 
     if (app_config.mjpeg_enable && EQUALS(req->uri, "/mjpeg")) {
+        /* Raise the accept-path SO_SNDBUF cap (sized for small H26x/fMP4
+           payloads) so a whole JPEG frame fits the buffer and the
+           complete-or-skip send stays single-shot */
+        int sndbuf = HTTP_MJPEG_SNDBUF_SIZE;
+        if (setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+            HAL_WARNING("server", "setsockopt(SO_SNDBUF) failed");
         respLen = sprintf(response,
             "HTTP/1.0 200 OK\r\n"
             "Cache-Control: no-cache\r\n"
