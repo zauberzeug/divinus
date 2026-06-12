@@ -257,7 +257,7 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
     __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
             "CSeq: %d\r\n"
             "Content-Type: application/sdp\r\n"
-            "Content-Length: %d\r\n"
+            "Content-Length: %zu\r\n"
             "\r\n"
             "%s", p->cseq, strlen(sdp), sdp);
 }
