@@ -32,6 +32,7 @@ typedef struct {
     int paysize, total;
     size_t buf_size;
     int header_len;
+    http_header_t headers[HTTP_MAX_HEADERS + 1];
 } http_request_t;
 
 struct {
@@ -56,8 +57,6 @@ const http_error_t http_errors[] = {
     {501, "Not Implemented", "The server does not support the functionality."},
     {503, "Service Unavailable", "All stream slots are currently in use."}
 };
-http_header_t http_headers[HTTP_MAX_HEADERS + 1] = {0};
-
 int server_fd = -1;
 pthread_t server_thread_id;
 pthread_mutex_t client_fds_mutex;
@@ -558,12 +557,6 @@ void send_html(const int fd, const char *data) {
     free(buf);
 }
 
-char *request_header(const char *name) {
-    return http_headers_get(http_headers, name);
-}
-
-http_header_t *request_headers(void) { return http_headers; }
-
 void parse_request(http_request_t *req) {
     struct sockaddr_in client_sock;
     socklen_t client_sock_len = sizeof(client_sock);
@@ -611,7 +604,7 @@ grant_access:
         return;
     }
 
-    http_headers_parse(http_headers, &state, req->input + req->header_len);
+    http_headers_parse(req->headers, &state, req->input + req->header_len);
 
     req->payload = req->input + req->header_len;
 }
@@ -706,7 +699,7 @@ void respond_request(http_request_t *req) {
         }
 
         if (!should_skip_auth) {
-            char *auth = request_header("Authorization");
+            char *auth = http_headers_get(req->headers, "Authorization");
             char cred[66], valid[256];
 
             strcpy(cred, app_config.web_auth_user);
@@ -1272,7 +1265,7 @@ void respond_request(http_request_t *req) {
             return;
         }
         if (EQUALS(req->method, "POST")) {
-            char *type = request_header("Content-Type");
+            char *type = http_headers_get(req->headers, "Content-Type");
             if (type && STARTS_WITH(type, "multipart/form-data")) {
                 char *bound = strstr(type, "boundary=");
                 if (!bound) {
@@ -1583,7 +1576,9 @@ void *server_thread(void *vargp) {
     listen(server_fd, 128);
 
     struct pollfd fds[HTTP_MAX_CLIENTS + 1];
-    http_request_t reqs[HTTP_MAX_CLIENTS];
+    /* Static: 50 slots with per-request header tables would weigh on the
+       configurable (and potentially small) web thread stack */
+    static http_request_t reqs[HTTP_MAX_CLIENTS];
 
     for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
         fds[i + 1].fd = -1;
