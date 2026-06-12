@@ -612,7 +612,7 @@ static inline int __set_select_sock(struct list_t *p, void *param)
 
 static inline int __bind_tcp(unsigned short port)
 {
-    int server_fd = 0;
+    int server_fd = -1;
     struct sockaddr_in addr;
     int tmp = 1;
 
@@ -640,7 +640,7 @@ static inline int __bind_tcp(unsigned short port)
 
     return server_fd;
 error:
-    if (server_fd > 0) close(server_fd);
+    if (server_fd >= 0) close(server_fd);
     return FAILURE;
 }
 
@@ -688,7 +688,7 @@ static inline int __bind_rtp(struct connection_item_t *con )
 
     return SUCCESS;
 error:
-    if (server_fd > 0) close(server_fd);
+    if (server_fd >= 0) close(server_fd);
     return FAILURE;
 }
 
@@ -731,7 +731,7 @@ static inline int __bind_rtcp(struct connection_item_t *con )
 
     return SUCCESS;
 error:
-    if (server_fd > 0) close(server_fd);
+    if (server_fd >= 0) close(server_fd);
     return FAILURE;
 }
 

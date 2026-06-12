@@ -917,6 +917,7 @@ static void hevcParseVPS(
     uint8_t p_dec_nal[i_decoded_nal_size];
     size_t i_size =
         (i_buffer < i_decoded_nal_size) ? i_buffer : i_decoded_nal_size;
+    memset(p_dec_nal, 0, i_decoded_nal_size);
     nal_decode(p_buffer, p_dec_nal, i_size);
 
     /* first two bytes are the NAL header, 3rd and 4th are:

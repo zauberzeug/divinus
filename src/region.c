@@ -148,7 +148,7 @@ int region_parse_bitmap(FILE **file, bitmapfile *bmpFile, bitmapinfo *bmpInfo) {
 
 int region_prepare_image(char *path, hal_bitmap *bitmap) {
     FILE *file;
-    unsigned char *bitmapdata, *bitmapout;
+    unsigned char *bitmapdata = NULL, *bitmapout = NULL;
     unsigned short *dest;
 
     if (!path)
@@ -211,7 +211,7 @@ int region_prepare_image(char *path, hal_bitmap *bitmap) {
     }
 
     err = spng_decode_image(ctx, bitmapdata, bitmapsize, SPNG_FMT_RGBA8, 0);
-    if (!bitmapdata) {
+    if (err) {
         HAL_DANGER("server", "Decoding the PNG image failed!\nError: %s\n", spng_strerror(err));
         goto png_error;
     }
@@ -385,6 +385,7 @@ void *region_thread(void) {
 found_font:;
                     hal_bitmap bitmap = text_create_rendered(font, osds[id].size, out, osds[id].color,
                         osds[id].outl, osds[id].thick);
+                    if (!bitmap.data) continue;
                     hal_rect rect = { .height = bitmap.dim.height, .width = bitmap.dim.width,
                         .x = osds[id].posx, .y = osds[id].posy };
                     switch (plat) {

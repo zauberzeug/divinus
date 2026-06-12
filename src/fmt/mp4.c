@@ -133,7 +133,7 @@ enum BufError mp4_ingest_audio(const char *data, const uint32_t len) {
 }
 
 enum BufError mp4_set_state(struct Mp4State *state) {
-    enum BufError err;
+    enum BufError err = BUF_OK;
     if (pos_sequence_number > 0)
         err = put_u32_be_to_offset(
             &buf_moof, pos_sequence_number, state->sequence_number);

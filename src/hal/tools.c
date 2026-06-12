@@ -4,7 +4,7 @@ static const char base64_table[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 int base64_decode(char *decoded, const char *string, int maxLen) {
-    char buf[3];
+    char buf[3] = {0};
     int buflen = 0, i = 0, v;
 
     while (*string && *string != '=' && i < maxLen) {

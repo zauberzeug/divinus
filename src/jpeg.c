@@ -133,6 +133,9 @@ int jpeg_get(short width, short height, char quality, char grayscale,
 #elif defined(__riscv) || defined(__riscv__)
         case HAL_PLATFORM_CVI: ret = cvi_video_snapshot_grab(jpeg_index, jpeg); break;
 #endif
+        default:
+            pthread_mutex_unlock(&jpeg_mutex);
+            return EXIT_FAILURE;
     }
     if (ret && jpeg->data) { 
         free(jpeg->data);

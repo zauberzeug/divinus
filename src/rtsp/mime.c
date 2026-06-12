@@ -72,6 +72,7 @@ mime_encoded_handle mime_base64_create(char *src, size_t len)
     TALLOC(nh, return NULL);
    
     ASSERT(result = calloc(len * 2 + 1, sizeof(char)), goto error);
+    nh->result = result;
     p = result;
 
     for(i = 0; i <= len - 3; i+=3) {
@@ -108,7 +109,6 @@ mime_encoded_handle mime_base64_create(char *src, size_t len)
 
     *p = 0;
 
-    nh->result = result;
     nh->len_result= 1 + p - result;
     nh->len_src = len;
     nh->base = 64;
