@@ -1282,16 +1282,31 @@ void respond_request(http_request_t *req) {
         }
         if (EQUALS(req->method, "POST")) {
             char *type = request_header("Content-Type");
-            if (STARTS_WITH(type, "multipart/form-data")) {
-                char *bound = strstr(type, "boundary=") + strlen("boundary=");
+            if (type && STARTS_WITH(type, "multipart/form-data")) {
+                char *bound = strstr(type, "boundary=");
+                if (!bound) {
+                    send_http_error(req->clntFd, 400);
+                    return;
+                }
+                bound += strlen("boundary=");
 
                 char *payloadb = strstr(req->payload, bound);
-                payloadb = memstr(payloadb, "\r\n\r\n", req->total - (payloadb - req->input), 4);
-                if (payloadb) payloadb += 4;
+                if (payloadb)
+                    payloadb = memstr(payloadb, "\r\n\r\n",
+                        req->total - (payloadb - req->input), 4);
+                if (!payloadb) {
+                    send_http_error(req->clntFd, 400);
+                    return;
+                }
+                payloadb += 4;
 
                 char *payloade = memstr(payloadb, bound,
                     req->total - (payloadb - req->input), strlen(bound));
-                if (payloade) payloade -= 4;
+                if (!payloade || payloade - payloadb < 4) {
+                    send_http_error(req->clntFd, 400);
+                    return;
+                }
+                payloade -= 4;
 
                 char path[32];
 
@@ -1301,6 +1316,10 @@ void respond_request(http_request_t *req) {
                     sprintf(path, "/tmp/osd%d.bmp", id);
 
                 FILE *img = fopen(path, "wb");
+                if (!img) {
+                    send_http_error(req->clntFd, 500);
+                    return;
+                }
                 fwrite(payloadb, sizeof(char), payloade - payloadb, img);
                 fclose(img);
 
@@ -1459,7 +1478,7 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/exposure")) {
-        if (!EMPTY(req->query)) {
+        if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -1668,15 +1687,29 @@ void *server_thread(void *vargp) {
                             req->header_len = (hdr_end + 4) - req->input;
 
                             char *cl = req->input;
+                            int err = 0, seen = 0;
                             req->paysize = 0;
                             while (cl < hdr_end) {
                                 if (!strncasecmp(cl, "Content-Length:", 15)) {
-                                    req->paysize = atoi(cl + 15);
-                                    break;
-                                }
+                                    char *end;
+                                    long size = strtol(cl + 15, &end, 10);
+                                    if (seen++ || end == cl + 15 ||
+                                        size < 0 || size > HTTP_MAX_BUF_SIZE)
+                                        err = 400;
+                                    else
+                                        req->paysize = size;
+                                } else if (!strncasecmp(cl, "Transfer-Encoding:", 18))
+                                    err = 501;
                                 cl = strchr(cl, '\n');
                                 if (!cl) break;
                                 cl++;
+                            }
+                            if (err) {
+                                send_http_error(req->clntFd, err);
+                                fds[i + 1].fd = -1;
+                                free(req->input);
+                                req->input = NULL;
+                                continue;
                             }
                         }
                     }
