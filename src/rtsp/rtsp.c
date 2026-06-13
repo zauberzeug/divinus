@@ -19,6 +19,8 @@
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 
+#include "../http_headers.h"
+
 extern void request_idr();
 
 /******************************************************************************
@@ -257,7 +259,7 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
     __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
             "CSeq: %d\r\n"
             "Content-Type: application/sdp\r\n"
-            "Content-Length: %d\r\n"
+            "Content-Length: %zu\r\n"
             "\r\n"
             "%s", p->cseq, strlen(sdp), sdp);
 }
@@ -427,10 +429,8 @@ static int __message_proc_sock(struct list_t *e, void *p)
             }
 
             if (SCMP(__STR_AUTH, buf) && h->isAuthOn) {
-                    char cred[66], valid[256];
-                    sprintf(cred, "%s:%s", h->user, h->pass);
-                    strcpy(valid, "Basic ");
-                    base64_encode(valid + 6, cred, strlen(cred));
+                    char valid[HTTP_BASIC_AUTH_MAX];
+                    http_basic_auth(valid, sizeof(valid), h->user, h->pass);
                     isAuthValid = !strncmp(buf + strlen(__STR_AUTH) + 2, valid, strlen(valid));
              } else if (SCMP(__STR_CSEQ, buf)) {
                 ASSERT(tok = strtok_r(buf, ": ", &last), goto error);

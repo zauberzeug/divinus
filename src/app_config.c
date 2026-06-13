@@ -219,6 +219,19 @@ int app_config_save(void) {
     return EXIT_SUCCESS;
 }
 
+/* Auth credentials feed fixed-size fields and the Basic-auth builder;
+   an oversize value is a misconfiguration worth refusing to start on. */
+static enum ConfigError parse_auth_cred(struct IniConfig *ini,
+    const char *section, const char *param, char *value, size_t size) {
+    enum ConfigError err = parse_param_value_n(ini, section, param, value, size);
+    if (err == CONFIG_PARAM_NOT_FOUND || err == CONFIG_SECTION_NOT_FOUND)
+        return CONFIG_OK;
+    if (err == CONFIG_PARAM_TOO_LONG)
+        HAL_DANGER("config", "[%s] %s must be at most %zu characters!\n",
+            section, param, size - 1);
+    return err;
+}
+
 enum ConfigError app_config_parse(void) {
     memset(&app_config, 0, sizeof(struct AppConfig));
 
@@ -318,10 +331,14 @@ enum ConfigError app_config_parse(void) {
         &count, app_config.web_whitelist);
     *app_config.web_whitelist[count] = '\0';
     parse_bool(&ini, "system", "web_enable_auth", &app_config.web_enable_auth);
-    parse_param_value(
-        &ini, "system", "web_auth_user", app_config.web_auth_user);
-    parse_param_value(
-        &ini, "system", "web_auth_pass", app_config.web_auth_pass);
+    err = parse_auth_cred(&ini, "system", "web_auth_user",
+        app_config.web_auth_user, sizeof(app_config.web_auth_user));
+    if (err != CONFIG_OK)
+        goto RET_ERR;
+    err = parse_auth_cred(&ini, "system", "web_auth_pass",
+        app_config.web_auth_pass, sizeof(app_config.web_auth_pass));
+    if (err != CONFIG_OK)
+        goto RET_ERR;
     parse_bool(&ini, "system", "web_auth_skiplocal", &app_config.web_auth_skiplocal);
     err = parse_bool(
         &ini, "system", "web_enable_static", &app_config.web_enable_static);
@@ -427,10 +444,14 @@ enum ConfigError app_config_parse(void) {
     parse_bool(&ini, "onvif", "enable", &app_config.onvif_enable);
     if (app_config.onvif_enable) {
         parse_bool(&ini, "onvif", "enable_auth", &app_config.onvif_enable_auth);
-        parse_param_value(
-            &ini, "onvif", "auth_user", app_config.onvif_auth_user);
-        parse_param_value(
-            &ini, "onvif", "auth_pass", app_config.onvif_auth_pass);
+        err = parse_auth_cred(&ini, "onvif", "auth_user",
+            app_config.onvif_auth_user, sizeof(app_config.onvif_auth_user));
+        if (err != CONFIG_OK)
+            goto RET_ERR;
+        err = parse_auth_cred(&ini, "onvif", "auth_pass",
+            app_config.onvif_auth_pass, sizeof(app_config.onvif_auth_pass));
+        if (err != CONFIG_OK)
+            goto RET_ERR;
     }
 
     parse_bool(&ini, "record", "enable", &app_config.record_enable);
@@ -448,10 +469,14 @@ enum ConfigError app_config_parse(void) {
     parse_int(&ini, "rtsp", "port", 0, USHRT_MAX, &app_config.rtsp_port);
     if (app_config.rtsp_enable) {
         parse_bool(&ini, "rtsp", "enable_auth", &app_config.rtsp_enable_auth);
-        parse_param_value(
-            &ini, "rtsp", "auth_user", app_config.rtsp_auth_user);
-        parse_param_value(
-            &ini, "rtsp", "auth_pass", app_config.rtsp_auth_pass);
+        err = parse_auth_cred(&ini, "rtsp", "auth_user",
+            app_config.rtsp_auth_user, sizeof(app_config.rtsp_auth_user));
+        if (err != CONFIG_OK)
+            goto RET_ERR;
+        err = parse_auth_cred(&ini, "rtsp", "auth_pass",
+            app_config.rtsp_auth_pass, sizeof(app_config.rtsp_auth_pass));
+        if (err != CONFIG_OK)
+            goto RET_ERR;
     }
 
     parse_bool(&ini, "stream", "enable", &app_config.stream_enable);

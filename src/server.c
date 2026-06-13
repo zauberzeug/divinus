@@ -1,4 +1,7 @@
 #include "server.h"
+#include "sock_send.h"
+
+#include "http_headers.h"
 
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
@@ -9,6 +12,13 @@
 /* Caps kernel send buffering so a lagging receiver hits EAGAIN within a
    couple of frames instead of accumulating seconds of stale video */
 #define HTTP_SNDBUF_SIZE (256 * 1024)
+/* MJPEG clients instead get complete-or-skip frame sends, which need the
+   whole JPEG (can exceed 512 KiB at 4K) to fit the send buffer at once;
+   staleness is bounded by the frame fit check, not the buffer size */
+#define HTTP_MJPEG_SNDBUF_SIZE (1024 * 1024)
+/* One log line (not one per frame) once an MJPEG client has been skipped
+   this many frames in a row */
+#define MJPEG_SKIP_LOG_THRESHOLD 100
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -30,6 +40,7 @@ typedef struct {
     int paysize, total;
     size_t buf_size;
     int header_len;
+    http_header_t headers[HTTP_MAX_HEADERS + 1];
 } http_request_t;
 
 struct {
@@ -37,11 +48,8 @@ struct {
     enum StreamType type;
     struct Mp4State mp4;
     unsigned int nalCnt;
+    unsigned int skipCnt;
 } client_fds[HTTP_MAX_CLIENTS];
-
-typedef struct {
-    char *name, *value;
-} http_header_t;
 
 typedef struct {
     int code;
@@ -58,8 +66,6 @@ const http_error_t http_errors[] = {
     {501, "Not Implemented", "The server does not support the functionality."},
     {503, "Service Unavailable", "All stream slots are currently in use."}
 };
-http_header_t http_headers[17] = {{"\0", "\0"}};
-
 int server_fd = -1;
 pthread_t server_thread_id;
 pthread_mutex_t client_fds_mutex;
@@ -224,6 +230,7 @@ static bool register_stream_client(int sockFd, enum StreamType type,
         client_fds[i].sockFd = sockFd;
         client_fds[i].type = type;
         client_fds[i].nalCnt = 0;
+        client_fds[i].skipCnt = 0;
         client_fds[i].mp4.header_sent = false;
         if (type == STREAM_MP4)
             mp4_clients++;
@@ -250,14 +257,14 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
             if (client_fds[c].sockFd < 0) continue;
             if (client_fds[c].type != STREAM_H26X) continue;
 
-            for (char j = 0; j < pack->naluCnt; j++) {
+            for (int j = 0; j < pack->naluCnt; j++) {
                 if (client_fds[c].nalCnt == 0 &&
                     pack->nalu[j].type != NalUnitType_SPS &&
                     pack->nalu[j].type != NalUnitType_SPS_HEVC)
                     continue;
 
                 char len_buf[16];
-                int len_size = sprintf(len_buf, "%zX\r\n", pack->nalu[j].length);
+                int len_size = sprintf(len_buf, "%X\r\n", pack->nalu[j].length);
 
                 struct iovec iov[3];
                 iov[0].iov_base = len_buf;
@@ -292,7 +299,7 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
         hal_vidpack *pack = &stream->pack[i];
         unsigned char *pack_data = pack->data + pack->offset;
 
-        for (char j = 0; j < pack->naluCnt; j++) {
+        for (int j = 0; j < pack->naluCnt; j++) {
             if ((pack->nalu[j].type == NalUnitType_SPS || pack->nalu[j].type == NalUnitType_SPS_HEVC)
                 && pack->nalu[j].length >= 4 && pack->nalu[j].length <= UINT16_MAX)
                 mp4_set_sps(pack_data + pack->nalu[j].offset + 4, pack->nalu[j].length - 4, isH265);
@@ -319,7 +326,7 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
                 err = mp4_get_header(&header_buf);
                 chk_err_continue if (!header_buf.offset) continue;
                 ssize_t len_size =
-                    sprintf(len_buf, "%zX\r\n", header_buf.offset);
+                    sprintf(len_buf, "%X\r\n", header_buf.offset);
                 if (send_to_client(i, len_buf, len_size) < 0)
                     continue;
                 if (send_to_client(i, header_buf.buf, header_buf.offset) < 0)
@@ -394,7 +401,7 @@ void send_pcm_to_client(hal_audframe *frame) {
         if (client_fds[i].type != STREAM_PCM) continue;
 
         char len_buf[50];
-        ssize_t len_size = sprintf(len_buf, "%zX\r\n", frame->length[0]);
+        ssize_t len_size = sprintf(len_buf, "%X\r\n", frame->length[0]);
         if (send_to_client(i, len_buf, len_size) < 0)
             continue; // send <SIZE>\r\n
         if (send_to_client(i, frame->data[0], frame->length[0]) < 0)
@@ -419,10 +426,27 @@ void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
         if (client_fds[i].sockFd < 0) continue;
         if (client_fds[i].type != STREAM_MJPEG) continue;
 
-        if (send_to_client(i, prefix_buf, prefix_size) < 0)
-            continue; // send <SIZE>\r\n
-        if (send_to_client(i, buf, size) < 0)
-            continue; // send <DATA>\r\n
+        /* Complete-or-skip per frame: backpressure lowers a slow client's
+           frame rate instead of disconnecting it, a started multipart part
+           always finishes (no torn JPEG), and the venc thread never waits
+           on a lagging receiver */
+        struct iovec iov[2] = {
+            {.iov_base = prefix_buf, .iov_len = (size_t)prefix_size},
+            {.iov_base = buf, .iov_len = (size_t)size}
+        };
+        switch (sock_send_frame_or_skip(client_fds[i].sockFd, iov, 2)) {
+            case SOCK_SEND_SENT:
+                client_fds[i].skipCnt = 0;
+                break;
+            case SOCK_SEND_SKIPPED:
+                if (++client_fds[i].skipCnt == MJPEG_SKIP_LOG_THRESHOLD)
+                    HAL_INFO("server", "MJPEG client %u is not keeping up, "
+                        "%u consecutive frames skipped\n", i, client_fds[i].skipCnt);
+                break;
+            case SOCK_SEND_DEAD:
+                free_client(i);
+                break;
+        }
     }
     pthread_mutex_unlock(&client_fds_mutex);
 }
@@ -481,7 +505,7 @@ void *send_jpeg_thread(void *vargp) {
     int buf_len = sprintf(
         buf, "HTTP/1.1 200 OK\r\n"
         "Content-Type: image/jpeg\r\n"
-        "Content-Length: %lu\r\n"
+        "Content-Length: %u\r\n"
         "Connection: close\r\n\r\n",
         jpeg.jpegSize);
     send_to_fd(task->client_fd, buf, buf_len);
@@ -560,16 +584,6 @@ void send_html(const int fd, const char *data) {
     free(buf);
 }
 
-char *request_header(const char *name) {
-    http_header_t *h = http_headers;
-    for (; h->name; h++)
-        if (!strcasecmp(h->name, name))
-            return h->value;
-    return NULL;
-}
-
-http_header_t *request_headers(void) { return http_headers; }
-
 void parse_request(http_request_t *req) {
     struct sockaddr_in client_sock;
     socklen_t client_sock_len = sizeof(client_sock);
@@ -617,24 +631,7 @@ grant_access:
         return;
     }
 
-    http_header_t *h = http_headers;
-    while (h < http_headers + 16) {
-        char *k, *v, *e;
-        if (!(k = strtok_r(NULL, "\r\n: \t", &state)))
-            break;
-        v = strtok_r(NULL, "\r\n", &state);
-        if (!v) break;
-        while (*v && *v == ' ' && v++);
-        h->name = k;
-        h++->value = v;
-#ifdef DEBUG_HTTP
-        fprintf(stderr, "         (H) %s: %s\n", k, v);
-#endif
-        if (state >= req->input + req->header_len) break;
-        e = v + 1 + strlen(v);
-        if (e[1] == '\r' && e[2] == '\n')
-            break;
-    }
+    http_headers_parse(req->headers, &state, req->input + req->header_len);
 
     req->payload = req->input + req->header_len;
 }
@@ -729,14 +726,11 @@ void respond_request(http_request_t *req) {
         }
 
         if (!should_skip_auth) {
-            char *auth = request_header("Authorization");
-            char cred[66], valid[256];
+            char *auth = http_headers_get(req->headers, "Authorization");
+            char valid[HTTP_BASIC_AUTH_MAX];
 
-            strcpy(cred, app_config.web_auth_user);
-            strcpy(cred + strlen(app_config.web_auth_user), ":");
-            strcpy(cred + strlen(app_config.web_auth_user) + 1, app_config.web_auth_pass);
-            strcpy(valid, "Basic ");
-            base64_encode(valid + 6, cred, strlen(cred));
+            http_basic_auth(valid, sizeof(valid),
+                app_config.web_auth_user, app_config.web_auth_pass);
 
             if (!auth || !EQUALS(auth, valid)) {
                 respLen = sprintf(response,
@@ -810,6 +804,16 @@ void respond_request(http_request_t *req) {
     }
 
     if (app_config.mjpeg_enable && EQUALS(req->uri, "/mjpeg")) {
+        /* Raise the accept-path SO_SNDBUF cap (sized for small H26x/fMP4
+           payloads) so a whole JPEG frame fits the buffer and the
+           complete-or-skip send stays single-shot. SO_SNDBUF is silently
+           clipped to net.core.wmem_max (192 KiB on the target firmware,
+           below one large JPEG frame), so prefer SO_SNDBUFFORCE, which
+           may exceed it under CAP_NET_ADMIN */
+        int sndbuf = HTTP_MJPEG_SNDBUF_SIZE;
+        if (setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0 &&
+            setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+            HAL_WARNING("server", "setsockopt(SO_SNDBUF) failed");
         respLen = sprintf(response,
             "HTTP/1.0 200 OK\r\n"
             "Cache-Control: no-cache\r\n"
@@ -1295,7 +1299,7 @@ void respond_request(http_request_t *req) {
             return;
         }
         if (EQUALS(req->method, "POST")) {
-            char *type = request_header("Content-Type");
+            char *type = http_headers_get(req->headers, "Content-Type");
             if (type && STARTS_WITH(type, "multipart/form-data")) {
                 char *bound = strstr(type, "boundary=");
                 if (!bound) {
@@ -1672,7 +1676,9 @@ void *server_thread(void *vargp) {
     listen(server_fd, 128);
 
     struct pollfd fds[HTTP_MAX_CLIENTS + 1];
-    http_request_t reqs[HTTP_MAX_CLIENTS];
+    /* Static: 50 slots with per-request header tables would weigh on the
+       configurable (and potentially small) web thread stack */
+    static http_request_t reqs[HTTP_MAX_CLIENTS];
 
     for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
         fds[i + 1].fd = -1;

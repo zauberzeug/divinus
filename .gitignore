@@ -6,5 +6,5 @@
 compile_flags.txt
 divinus
 /.pixi
-/tests/unit/test_nal
-/tests/unit/test_gain
+/tests/unit/test_*
+!/tests/unit/test_*.*

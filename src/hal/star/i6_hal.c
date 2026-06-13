@@ -2,6 +2,8 @@
 
 #include "i6_hal.h"
 
+#include "../frc.h"
+
 i6_aud_impl  i6_aud;
 i6_isp_impl  i6_isp;
 i6_rgn_impl  i6_rgn;
@@ -18,6 +20,15 @@ int (*i6_vid_cb)(char, hal_vidstream*);
 i6_snr_pad _i6_snr_pad;
 i6_snr_plane _i6_snr_plane;
 char _i6_snr_framerate, _i6_snr_hdr, _i6_snr_index, _i6_snr_profile;
+
+/* Rate the sensor actually runs (long exposure lowers it below
+   _i6_snr_framerate) plus each channel's configured rate and the pacer
+   that holds intra-only streams at that rate. MI_SYS FRC on a VPE port
+   starves the channel's sibling ports on this SDK, so sub-rate streams
+   are paced by PTS at the venc output instead. */
+static char _i6_snr_fps_eff;
+static char _i6_chn_fps[I6_VENC_CHN_NUM];
+static frc_pacer _i6_chn_pace[I6_VENC_CHN_NUM];
 
 char _i6_aud_chn = 0;
 char _i6_aud_dev = 0;
@@ -167,6 +178,8 @@ int i6_channel_bind(char index, char framerate)
         if (ret = i6_sys.fnBindExt(&source, &dest, framerate, framerate,
             I6_SYS_LINK_FRAMEBASE, 0))
             return ret;
+        _i6_chn_fps[index] = framerate;
+        _i6_chn_pace[index] = (frc_pacer){0};
     }
 
     return EXIT_SUCCESS;
@@ -250,6 +263,7 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
             _i6_snr_framerate = framerate;
             if (ret = i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate))
                 return ret;
+            _i6_snr_fps_eff = framerate;
             break;
         }
         if (_i6_snr_profile < 0)
@@ -482,44 +496,69 @@ int i6_region_setbitmap(int handle, hal_bitmap *bitmap)
     return i6_rgn.fnSetBitmap(handle, &nativeBmp);
 }
 
-int i6_sensor_exposure(unsigned int micros)
+static int i6_sensor_rate_update(char framerate)
 {
     int ret;
 
-    if (micros == 0) {
-        /* Restore auto-exposure: reset limits to wide range and restore fps */
-        i6_isp_exp config;
-        if (ret = i6_isp.fnGetExposureLimit(0, &config))
+    if (framerate == _i6_snr_fps_eff)
+        return EXIT_SUCCESS;
+
+    HAL_INFO("i6_snr", "Sensor rate update %d -> %d\n",
+        _i6_snr_fps_eff, framerate);
+    if (ret = i6_snr.fnSetFramerate(_i6_snr_index, framerate)) {
+        HAL_DANGER("i6_snr", "Setting the sensor rate to %d failed "
+            "with %#x!\n", framerate, ret);
+        return ret;
+    }
+    _i6_snr_fps_eff = framerate;
+
+    return EXIT_SUCCESS;
+}
+
+static int i6_sensor_shutter_limit(unsigned int minUs, unsigned int maxUs)
+{
+    int ret;
+    i6_isp_exp config;
+
+    if (ret = i6_isp.fnGetExposureLimit(0, &config))
+        return ret;
+    config.minShutterUs = minUs;
+    config.maxShutterUs = maxUs;
+    return i6_isp.fnSetExposureLimit(0, &config);
+}
+
+int i6_sensor_exposure(unsigned int micros)
+{
+    int ret;
+    char framerate = frc_effective_fps(_i6_snr_framerate, micros);
+    unsigned int capUs = frc_shutter_cap(framerate, micros);
+
+    /* The frame time must exceed the shutter time: lower the sensor rate
+       before narrowing the shutter window. */
+    if (framerate < _i6_snr_fps_eff &&
+        (ret = i6_sensor_rate_update(framerate)))
+        return ret;
+
+    if (framerate > _i6_snr_fps_eff) {
+        /* The sensor silently keeps its extended frame time while the
+           applied shutter exceeds the new frame period, and the AE only
+           converges to a widened window over many frames: force a shutter
+           that fits the period (3/4 leaves readout margin), give the AE a
+           few of the still-slow frames to apply it, then raise the rate. */
+        unsigned int forceUs = 3 * capUs / 4;
+        if (ret = i6_sensor_shutter_limit(forceUs, forceUs))
             return ret;
-        config.minShutterUs = 0;
-        config.maxShutterUs = 333333;
-        if (ret = i6_isp.fnSetExposureLimit(0, &config))
+        for (int settleUs = _i6_snr_fps_eff > 0 ?
+            4000000 / _i6_snr_fps_eff : 0; settleUs > 0; settleUs -= 500000)
+            usleep(MIN(settleUs, 500000));
+        if (ret = i6_sensor_rate_update(framerate))
             return ret;
-        if (_i6_snr_framerate > 0)
-            i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate);
-        return 0;
     }
 
-    /* Reduce sensor fps if exposure requires it (frame time must exceed shutter) */
-    if (micros > 33333) {
-        unsigned int needed_fps = 1000000 / micros;
-        if (needed_fps < 3) needed_fps = 3;
-        if (ret = i6_snr.fnSetFramerate(_i6_snr_index, needed_fps))
-            return ret;
-    }
-
-    {
-        i6_isp_exp config;
-        if (ret = i6_isp.fnGetExposureLimit(0, &config))
-            return ret;
-
-        config.minShutterUs = micros;
-        config.maxShutterUs = micros;
-        if (ret = i6_isp.fnSetExposureLimit(0, &config))
-            return ret;
-    }
-
-    return 0;
+    /* Auto exposure (micros 0) is capped at the configured frame period:
+       the sensor must not trade the configured rate for shutter time
+       unless explicitly asked to with a long fixed exposure. */
+    return i6_sensor_shutter_limit(micros, capUs);
 }
 
 int i6_sensor_gain_limits_get(hal_gainlimits *limits)
@@ -953,6 +992,19 @@ void *i6_video_thread(void)
                             "channel %d failed with %#x!\n", i, ret);
                         if (stat.curPacks > 8) free(stream.packet);
                         break;
+                    }
+
+                    /* Hold intra-only streams at their configured rate by
+                       dropping early frames here: MI_SYS FRC on a VPE port
+                       starves the channel's sibling ports. */
+                    if (i6_state[i].payload == HAL_VIDCODEC_MJPG &&
+                        !frc_pace_due(&_i6_chn_pace[i], _i6_chn_fps[i],
+                            stream.packet[0].timestamp)) {
+                        if (ret = i6_venc.fnFreeStream(i, &stream))
+                            HAL_WARNING("i6_venc", "Releasing the stream on "
+                                "channel %d failed with %#x!\n", i, ret);
+                        if (stat.curPacks > 8) free(stream.packet);
+                        continue;
                     }
 
                     if (i6_vid_cb) {

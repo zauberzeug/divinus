@@ -1,14 +1,16 @@
 #include "record.h"
 
+#include <errno.h>
+
 static FILE *recordFile;
 static struct Mp4State recordState;
 static int recordSize;
 time_t recordStartTime = 0;
 char recordOn = 0, recordPath[256];
 
-static void record_check_segment_size(int upcoming) {
+static void record_check_segment_size(void) {
     if (app_config.record_segment_size <= 0) return;
-    if (recordSize + upcoming >= app_config.record_segment_size) {
+    if (recordSize >= app_config.record_segment_size) {
         record_stop();
         record_start();
     }
@@ -47,18 +49,22 @@ void record_start(void) {
     if (recordPath[strlen(recordPath) - 1] != '/')
         strncat(recordPath, "/", sizeof(recordPath) - strlen(recordPath) - 1);
 
+    char fileName[128];
     if (!EMPTY(app_config.record_filename)) {
-        strncpy(recordPath, app_config.record_filename, sizeof(recordPath) - 1);
-        recordPath[sizeof(recordPath) - 1] = '\0';
+        strncpy(fileName, app_config.record_filename, sizeof(fileName) - 1);
+        fileName[sizeof(fileName) - 1] = '\0';
     } else {
         char tempName[160];
         struct tm tm_buf, *tm_info = localtime_r(&recordStartTime, &tm_buf);
         sprintf(tempName, "recording_%s.mp4", timefmt);
-        strftime(recordPath, sizeof(recordPath), tempName, tm_info);
+        if (!strftime(fileName, sizeof(fileName), tempName, tm_info))
+            fileName[0] = '\0';
     }
+    strncat(recordPath, fileName, sizeof(recordPath) - strlen(recordPath) - 1);
 
     if (!(recordFile = fopen(recordPath, "wb"))) {
-        HAL_DANGER("record", "Failed to open the destination file!\n");
+        HAL_DANGER("record", "Failed to open the destination file %s: %s\n",
+            recordPath, strerror(errno));
         return;
     }
 
@@ -93,7 +99,7 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         unsigned int pack_len = pack->length - pack->offset;
         unsigned char *pack_data = pack->data + pack->offset;
 
-        for (char j = 0; j < pack->naluCnt; j++) {
+        for (int j = 0; j < pack->naluCnt; j++) {
             if ((pack->nalu[j].type == NalUnitType_SPS || pack->nalu[j].type == NalUnitType_SPS_HEVC) 
                 && pack->nalu[j].length >= 4 && pack->nalu[j].length <= UINT16_MAX)
                 mp4_set_sps(pack_data + pack->nalu[j].offset + 4, pack->nalu[j].length - 4, isH265);
@@ -109,11 +115,12 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         }
 
         static enum BufError err;
-        static char len_buf[50];
         if (!recordState.header_sent) {
             struct BitBuf header_buf;
             err = mp4_get_header(&header_buf); chk_err_continue
-            record_check_segment_size(header_buf.offset);
+            /* The muxer has no header until SPS/PPS arrive with the first
+               IDR; fragments written before it would be unplayable. */
+            if (!header_buf.offset) continue;
             recordSize += header_buf.offset;
             fwrite(header_buf.buf, 1, header_buf.offset, recordFile);
 
@@ -130,19 +137,17 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         {
             struct BitBuf moof_buf;
             err = mp4_get_moof(&moof_buf); chk_err_continue
-            record_check_segment_size(moof_buf.offset);
             recordSize += moof_buf.offset;
             fwrite(moof_buf.buf, 1, moof_buf.offset, recordFile);
         }
         {
             struct BitBuf mdat_buf;
             err = mp4_get_mdat(&mdat_buf); chk_err_continue
-            record_check_segment_size(mdat_buf.offset);
             recordSize += mdat_buf.offset;
             fwrite(mdat_buf.buf, 1, mdat_buf.offset, recordFile);
-            
         }
     }
 
+    record_check_segment_size();
     record_check_segment_duration();
 }
