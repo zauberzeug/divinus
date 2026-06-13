@@ -25,6 +25,7 @@ test_record_SRC := $(SRCDIR)/record.c $(SRCDIR)/fmt/mp4.c $(SRCDIR)/fmt/bitbuf.c
                    $(SRCDIR)/fmt/moof.c $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/nal.c
 test_sock_send_SRC := $(SRCDIR)/sock_send.c
 test_frc_SRC := $(SRCDIR)/hal/frc.c
+test_gain_SRC := $(SRCDIR)/gain.c
 
 .PHONY: all clean
 all: $(BINS)

@@ -111,6 +111,10 @@ int app_config_save(void) {
     fprintf(file, "  flip: %s\n", app_config.flip ? "true" : "false");
     fprintf(file, "  antiflicker: %d\n", app_config.antiflicker);
     fprintf(file, "  exposure: %u\n", app_config.exposure);
+    fprintf(file, "  min_gain: %u\n", app_config.min_gain);
+    fprintf(file, "  max_gain: %u\n", app_config.max_gain);
+    fprintf(file, "  min_isp_gain: %u\n", app_config.min_isp_gain);
+    fprintf(file, "  max_isp_gain: %u\n", app_config.max_isp_gain);
     fprintf(file, "  level3dnr: %d\n", app_config.level3dnr);
 
     fprintf(file, "mdns:\n");
@@ -397,6 +401,10 @@ enum ConfigError app_config_parse(void) {
         goto RET_ERR;
     parse_int(&ini, "isp", "antiflicker", -1, 60, &app_config.antiflicker);
     parse_int(&ini, "isp", "exposure", 0, 333333, &app_config.exposure);
+    parse_uint32(&ini, "isp", "min_gain", 0, UINT_MAX, &app_config.min_gain);
+    parse_uint32(&ini, "isp", "max_gain", 0, UINT_MAX, &app_config.max_gain);
+    parse_uint32(&ini, "isp", "min_isp_gain", 0, UINT_MAX, &app_config.min_isp_gain);
+    parse_uint32(&ini, "isp", "max_isp_gain", 0, UINT_MAX, &app_config.max_isp_gain);
     parse_int(&ini, "isp", "level3dnr", 0, 7, &app_config.level3dnr);
 
     parse_bool(&ini, "mdns", "enable", &app_config.mdns_enable);

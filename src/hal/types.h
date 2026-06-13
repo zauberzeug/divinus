@@ -98,6 +98,21 @@ typedef struct {
     unsigned short bitrate, maxBitrate;
 } hal_vidconfig;
 
+/* AE gain limits, 1024 == 1x; zero in a set request means "leave unchanged" */
+typedef struct {
+    unsigned int minSensorGain;
+    unsigned int maxSensorGain;
+    unsigned int minIspGain;
+    unsigned int maxIspGain;
+} hal_gainlimits;
+
+/* Live AE state, gains in the same 1024 == 1x convention */
+typedef struct {
+    unsigned int shutterUs;
+    unsigned int sensorGain;
+    unsigned int ispGain;
+} hal_aestate;
+
 typedef struct {
     unsigned int length;
     unsigned int offset;

@@ -1,5 +1,7 @@
 #include "media.h"
 
+#include "gain.h"
+
 char audioOn = 0, udpOn = 0;
 pthread_mutex_t aencMtx, chnMtx, mp4Mtx;
 pthread_t aencPid = 0, audPid = 0, ispPid = 0, vidPid = 0;
@@ -279,6 +281,48 @@ int set_exposure(unsigned int micros) {
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
         case HAL_PLATFORM_I6:  ret = i6_sensor_exposure(micros); break;
+#endif
+    }
+    pthread_mutex_unlock(&chnMtx);
+    return ret;
+}
+
+int get_gain_limits(hal_gainlimits *limits) {
+    int ret = -1;
+    pthread_mutex_lock(&chnMtx);
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6:  ret = i6_sensor_gain_limits_get(limits); break;
+#endif
+    }
+    pthread_mutex_unlock(&chnMtx);
+    return ret;
+}
+
+int set_gain_limits(const hal_gainlimits *request) {
+    int ret = -1;
+    pthread_mutex_lock(&chnMtx);
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6: {
+            hal_gainlimits merged;
+            if (ret = i6_sensor_gain_limits_get(&merged)) break;
+            if (ret = gain_limits_merge(&merged, request)) break;
+            ret = i6_sensor_gain_limits_set(&merged);
+            break;
+        }
+#endif
+    }
+    pthread_mutex_unlock(&chnMtx);
+    return ret;
+}
+
+int get_ae_state(hal_aestate *state) {
+    int ret = -1;
+    pthread_mutex_lock(&chnMtx);
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6:  ret = i6_sensor_ae_query(state); break;
 #endif
     }
     pthread_mutex_unlock(&chnMtx);
@@ -880,6 +924,25 @@ int sdk_start(void) {
         else
             HAL_INFO("media", "Fixed exposure set to %uus\n",
                 app_config.exposure);
+    }
+
+    {
+        hal_gainlimits request = {
+            .minSensorGain = app_config.min_gain,
+            .maxSensorGain = app_config.max_gain,
+            .minIspGain = app_config.min_isp_gain,
+            .maxIspGain = app_config.max_isp_gain };
+        if (request.minSensorGain || request.maxSensorGain ||
+            request.minIspGain || request.maxIspGain) {
+            ret = set_gain_limits(&request);
+            if (ret)
+                HAL_DANGER("media", "Failed to set gain limits: %#x\n", ret);
+            else
+                HAL_INFO("media", "Gain limits set to sensor %u..%u, "
+                    "isp %u..%u (1024 = 1x, 0 = unchanged)\n",
+                    request.minSensorGain, request.maxSensorGain,
+                    request.minIspGain, request.maxIspGain);
+        }
     }
 
     HAL_INFO("media", "SDK has started successfully!\n");

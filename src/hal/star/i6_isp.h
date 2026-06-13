@@ -14,6 +14,30 @@ typedef struct {
 } i6_isp_exp;
 
 typedef struct {
+    unsigned int fNumX10;
+    unsigned int sensorGain;
+    unsigned int ispGain;
+    unsigned int shutterUs;
+} i6_isp_expval;
+
+/* Layout of MI_ISP_AE_EXPO_INFO_TYPE_t (mi_isp_3a_datatype.h); identical
+   across the infinity6/6b0/6e ISP header variants */
+typedef struct {
+    int isStable;
+    int reachBoundary;
+    i6_isp_expval expoLong;
+    i6_isp_expval expoShort;
+    struct {
+        unsigned int lumY;
+        unsigned int avgY;
+        unsigned int hits[128];
+    } histWeightY;
+    unsigned int lvX10;
+    int bv;
+    unsigned int sceneTarget;
+} i6_isp_expinfo;
+
+typedef struct {
     int params[13];
 } i6_isp_p3a;
 
@@ -26,6 +50,7 @@ typedef struct {
     int (*fnSetColorToGray)(int channel, char *enable);
     int (*fnGetExposureLimit)(int channel, i6_isp_exp *config);
     int (*fnSetExposureLimit)(int channel, i6_isp_exp *config);
+    int (*fnQueryExposureInfo)(int channel, i6_isp_expinfo *info);
 } i6_isp_impl;
 
 static int i6_isp_load(i6_isp_impl *isp_lib) {
@@ -59,6 +84,11 @@ static int i6_isp_load(i6_isp_impl *isp_lib) {
     if (!(isp_lib->fnSetExposureLimit = (int(*)(int channel, i6_isp_exp *config))
         hal_symbol_load("i6_isp", isp_lib->handle, "MI_ISP_AE_SetExposureLimit")))
         return EXIT_FAILURE;
+
+    /* Optional: missing on some older firmwares, AE readback then degrades
+       to limits only */
+    isp_lib->fnQueryExposureInfo = (int(*)(int channel, i6_isp_expinfo *info))
+        dlsym(isp_lib->handle, "MI_ISP_AE_QueryExposureInfo");
 
     return EXIT_SUCCESS;
 }

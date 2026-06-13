@@ -1523,6 +1523,72 @@ void respond_request(http_request_t *req) {
         return;
     }
 
+    /* AE gain limits and live AE state; gains use the SigmaStar convention
+       1024 == 1x, a zero parameter leaves that limit unchanged */
+    if (EQUALS(req->uri, "/api/gain")) {
+        if (req->query) {
+            char *remain;
+            hal_gainlimits request = {0};
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                long result = strtol(value, &remain, 10);
+                if (remain == value || result <= 0) continue;
+                if (EQUALS(key, "min_gain"))
+                    request.minSensorGain = result;
+                else if (EQUALS(key, "max_gain"))
+                    request.maxSensorGain = result;
+                else if (EQUALS(key, "min_isp_gain"))
+                    request.minIspGain = result;
+                else if (EQUALS(key, "max_isp_gain"))
+                    request.maxIspGain = result;
+            }
+            if ((request.minSensorGain || request.maxSensorGain ||
+                 request.minIspGain || request.maxIspGain) &&
+                !set_gain_limits(&request)) {
+                if (request.minSensorGain)
+                    app_config.min_gain = request.minSensorGain;
+                if (request.maxSensorGain)
+                    app_config.max_gain = request.maxSensorGain;
+                if (request.minIspGain)
+                    app_config.min_isp_gain = request.minIspGain;
+                if (request.maxIspGain)
+                    app_config.max_isp_gain = request.maxIspGain;
+            }
+        }
+        hal_gainlimits limits;
+        hal_aestate ae;
+        char limitsJson[128], aeJson[96];
+        if (!get_gain_limits(&limits))
+            sprintf(limitsJson,
+                "\"min_gain\":%u,\"max_gain\":%u,"
+                "\"min_isp_gain\":%u,\"max_isp_gain\":%u",
+                limits.minSensorGain, limits.maxSensorGain,
+                limits.minIspGain, limits.maxIspGain);
+        else
+            sprintf(limitsJson,
+                "\"min_gain\":null,\"max_gain\":null,"
+                "\"min_isp_gain\":null,\"max_isp_gain\":null");
+        if (!get_ae_state(&ae))
+            sprintf(aeJson,
+                "\"shutter_us\":%u,\"sensor_gain\":%u,\"isp_gain\":%u",
+                ae.shutterUs, ae.sensorGain, ae.ispGain);
+        else
+            sprintf(aeJson,
+                "\"shutter_us\":null,\"sensor_gain\":null,\"isp_gain\":null");
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{%s,%s}", limitsJson, aeJson);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/status")) {
         struct sysinfo si;
         sysinfo(&si);

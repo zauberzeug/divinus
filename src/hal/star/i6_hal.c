@@ -561,6 +561,56 @@ int i6_sensor_exposure(unsigned int micros)
     return i6_sensor_shutter_limit(micros, capUs);
 }
 
+int i6_sensor_gain_limits_get(hal_gainlimits *limits)
+{
+    int ret;
+    i6_isp_exp config;
+
+    if (ret = i6_isp.fnGetExposureLimit(0, &config))
+        return ret;
+
+    limits->minSensorGain = config.minSensorGain;
+    limits->maxSensorGain = config.maxSensorGain;
+    limits->minIspGain = config.minIspGain;
+    limits->maxIspGain = config.maxIspGain;
+
+    return EXIT_SUCCESS;
+}
+
+int i6_sensor_gain_limits_set(const hal_gainlimits *limits)
+{
+    int ret;
+    i6_isp_exp config;
+
+    if (ret = i6_isp.fnGetExposureLimit(0, &config))
+        return ret;
+
+    config.minSensorGain = limits->minSensorGain;
+    config.maxSensorGain = limits->maxSensorGain;
+    config.minIspGain = limits->minIspGain;
+    config.maxIspGain = limits->maxIspGain;
+
+    return i6_isp.fnSetExposureLimit(0, &config);
+}
+
+int i6_sensor_ae_query(hal_aestate *state)
+{
+    int ret;
+    i6_isp_expinfo info;
+
+    if (!i6_isp.fnQueryExposureInfo)
+        return EXIT_FAILURE;
+
+    if (ret = i6_isp.fnQueryExposureInfo(0, &info))
+        return ret;
+
+    state->shutterUs = info.expoLong.shutterUs;
+    state->sensorGain = info.expoLong.sensorGain;
+    state->ispGain = info.expoLong.ispGain;
+
+    return EXIT_SUCCESS;
+}
+
 int i6_video_create(char index, hal_vidconfig *config)
 {
     int ret;

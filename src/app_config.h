@@ -42,6 +42,11 @@ struct AppConfig {
     bool flip;
     int antiflicker;
     unsigned int exposure;
+    // AE gain limits, 1024 == 1x; 0 keeps the firmware default
+    unsigned int min_gain;
+    unsigned int max_gain;
+    unsigned int min_isp_gain;
+    unsigned int max_isp_gain;
     int level3dnr;
 
     // [osd]

@@ -44,7 +44,10 @@ void i6_region_destroy(char handle);
 void i6_region_init(void);
 int i6_region_setbitmap(int handle, hal_bitmap *bitmap);
 
+int i6_sensor_ae_query(hal_aestate *state);
 int i6_sensor_exposure(unsigned int micros);
+int i6_sensor_gain_limits_get(hal_gainlimits *limits);
+int i6_sensor_gain_limits_set(const hal_gainlimits *limits);
 
 int i6_video_create(char index, hal_vidconfig *config);
 int i6_video_destroy(char index);
