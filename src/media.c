@@ -627,6 +627,12 @@ int media_mjpeg_enable(void) {
 int media_mp4_disable(void) {
     int ret;
 
+    /* The H26x encoder (and thus its SPS/PPS/VPS) is going away; drop the
+       cached RTSP parameter sets up front so a reconfig never serves stale ones
+       in the SDP, even if a teardown step below errors out early. */
+    if (app_config.rtsp_enable && rtspHandle)
+        rtsp_clear_sprops(rtspHandle);
+
     for (char i = 0; i < chnCount; i++) {
         if (!chnState[i].enable) continue;
         if (chnState[i].payload != HAL_VIDCODEC_H264 &&
