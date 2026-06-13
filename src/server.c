@@ -1,5 +1,7 @@
 #include "server.h"
 
+#include "http_headers.h"
+
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
 #define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
@@ -30,6 +32,7 @@ typedef struct {
     int paysize, total;
     size_t buf_size;
     int header_len;
+    http_header_t headers[HTTP_MAX_HEADERS + 1];
 } http_request_t;
 
 struct {
@@ -38,10 +41,6 @@ struct {
     struct Mp4State mp4;
     unsigned int nalCnt;
 } client_fds[HTTP_MAX_CLIENTS];
-
-typedef struct {
-    char *name, *value;
-} http_header_t;
 
 typedef struct {
     int code;
@@ -58,8 +57,6 @@ const http_error_t http_errors[] = {
     {501, "Not Implemented", "The server does not support the functionality."},
     {503, "Service Unavailable", "All stream slots are currently in use."}
 };
-http_header_t http_headers[17] = {{"\0", "\0"}};
-
 int server_fd = -1;
 pthread_t server_thread_id;
 pthread_mutex_t client_fds_mutex;
@@ -560,16 +557,6 @@ void send_html(const int fd, const char *data) {
     free(buf);
 }
 
-char *request_header(const char *name) {
-    http_header_t *h = http_headers;
-    for (; h->name; h++)
-        if (!strcasecmp(h->name, name))
-            return h->value;
-    return NULL;
-}
-
-http_header_t *request_headers(void) { return http_headers; }
-
 void parse_request(http_request_t *req) {
     struct sockaddr_in client_sock;
     socklen_t client_sock_len = sizeof(client_sock);
@@ -617,24 +604,7 @@ grant_access:
         return;
     }
 
-    http_header_t *h = http_headers;
-    while (h < http_headers + 16) {
-        char *k, *v, *e;
-        if (!(k = strtok_r(NULL, "\r\n: \t", &state)))
-            break;
-        v = strtok_r(NULL, "\r\n", &state);
-        if (!v) break;
-        while (*v && *v == ' ' && v++);
-        h->name = k;
-        h++->value = v;
-#ifdef DEBUG_HTTP
-        fprintf(stderr, "         (H) %s: %s\n", k, v);
-#endif
-        if (state >= req->input + req->header_len) break;
-        e = v + 1 + strlen(v);
-        if (e[1] == '\r' && e[2] == '\n')
-            break;
-    }
+    http_headers_parse(req->headers, &state, req->input + req->header_len);
 
     req->payload = req->input + req->header_len;
 }
@@ -729,14 +699,11 @@ void respond_request(http_request_t *req) {
         }
 
         if (!should_skip_auth) {
-            char *auth = request_header("Authorization");
-            char cred[66], valid[256];
+            char *auth = http_headers_get(req->headers, "Authorization");
+            char valid[HTTP_BASIC_AUTH_MAX];
 
-            strcpy(cred, app_config.web_auth_user);
-            strcpy(cred + strlen(app_config.web_auth_user), ":");
-            strcpy(cred + strlen(app_config.web_auth_user) + 1, app_config.web_auth_pass);
-            strcpy(valid, "Basic ");
-            base64_encode(valid + 6, cred, strlen(cred));
+            http_basic_auth(valid, sizeof(valid),
+                app_config.web_auth_user, app_config.web_auth_pass);
 
             if (!auth || !EQUALS(auth, valid)) {
                 respLen = sprintf(response,
@@ -1295,7 +1262,7 @@ void respond_request(http_request_t *req) {
             return;
         }
         if (EQUALS(req->method, "POST")) {
-            char *type = request_header("Content-Type");
+            char *type = http_headers_get(req->headers, "Content-Type");
             if (type && STARTS_WITH(type, "multipart/form-data")) {
                 char *bound = strstr(type, "boundary=");
                 if (!bound) {
@@ -1606,7 +1573,9 @@ void *server_thread(void *vargp) {
     listen(server_fd, 128);
 
     struct pollfd fds[HTTP_MAX_CLIENTS + 1];
-    http_request_t reqs[HTTP_MAX_CLIENTS];
+    /* Static: 50 slots with per-request header tables would weigh on the
+       configurable (and potentially small) web thread stack */
+    static http_request_t reqs[HTTP_MAX_CLIENTS];
 
     for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
         fds[i + 1].fd = -1;

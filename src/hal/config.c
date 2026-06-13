@@ -55,9 +55,9 @@ enum ConfigError section_pos(
     return CONFIG_SECTION_NOT_FOUND;
 }
 
-enum ConfigError parse_param_value(
+enum ConfigError parse_param_value_n(
     struct IniConfig *ini, const char *section, const char *param_name,
-    char *param_value) {
+    char *param_value, size_t size) {
     int start_pos = 0;
     int end_pos = 0;
     if (strlen(section) > 0) {
@@ -82,8 +82,10 @@ enum ConfigError parse_param_value(
     if (match > 0 || (end_pos >= 0 && end_pos - start_pos < m[1].rm_so))
         return CONFIG_PARAM_NOT_FOUND;
 
-    int res = sprintf(param_value, "%.*s", (int)(m[1].rm_eo - m[1].rm_so),
-        ini->str + start_pos + m[1].rm_so);
+    int res = m[1].rm_eo - m[1].rm_so;
+    if ((size_t)res >= size)
+        return CONFIG_PARAM_TOO_LONG;
+    memcpy(param_value, ini->str + start_pos + m[1].rm_so, res);
     param_value[res] = 0;
 
     if (res >= 2 && param_value[0] == '"' && param_value[res - 1] == '"') {
@@ -96,6 +98,13 @@ enum ConfigError parse_param_value(
         param_value[--res] = '\0';
 
     return CONFIG_OK;
+}
+
+enum ConfigError parse_param_value(
+    struct IniConfig *ini, const char *section, const char *param_name,
+    char *param_value) {
+    return parse_param_value_n(
+        ini, section, param_name, param_value, (size_t)-1);
 }
 
 enum ConfigError parse_double(
