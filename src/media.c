@@ -305,6 +305,31 @@ int set_exposure(unsigned int micros) {
     return ret;
 }
 
+static int set_sensor_rate(char framerate) {
+    int ret = EXIT_SUCCESS;
+    pthread_mutex_lock(&chnMtx);
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6:  ret = i6_sensor_set_rate(framerate); break;
+#endif
+    }
+    pthread_mutex_unlock(&chnMtx);
+    return ret;
+}
+
+/* The sensor rate is the highest enabled stream rate; recompute it (and the
+   exposure policy that hangs off the frame budget) when a stream's fps or
+   enable state changes at runtime, so the UI's stream settings take effect
+   without a restart. */
+void refresh_sensor_rate(void) {
+    char target = MAX(app_config.mp4_enable ? app_config.mp4_fps : 0,
+                      app_config.mjpeg_enable ? app_config.mjpeg_fps : 0);
+    if (target <= 0)
+        return;
+    if (!set_sensor_rate(target))
+        set_exposure(app_config.exposure);
+}
+
 int get_gain_limits(hal_gainlimits *limits) {
     int ret = -1;
     pthread_mutex_lock(&chnMtx);

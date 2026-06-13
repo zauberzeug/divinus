@@ -1103,6 +1103,7 @@ void respond_request(http_request_t *req) {
 
             media_mjpeg_disable();
             if (app_config.mjpeg_enable) media_mjpeg_enable();
+            refresh_sensor_rate();
         }
 
         char mode[5] = "\0";
@@ -1187,6 +1188,7 @@ void respond_request(http_request_t *req) {
 
             media_mp4_disable();
             if (app_config.mp4_enable) media_mp4_enable();
+            refresh_sensor_rate();
         }
 
         char h265[6] = "false";

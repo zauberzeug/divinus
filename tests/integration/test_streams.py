@@ -22,6 +22,7 @@ Usage: uv run test_streams.py [camera-ip]
 """
 
 import io
+import re
 import socket
 import subprocess
 import sys
@@ -175,6 +176,80 @@ def test_fmp4(seconds: int = 6) -> None:
            f"rc={proc.returncode}, {len(errs)} errors" + (f", first: {errs[0].strip()[:90]}" if errs else ""))
 
 
+def api(path: str, timeout: float = 8.0) -> str:
+    """GET an /api/* endpoint and return the response body."""
+    s = socket.create_connection((CAM, 80), timeout=timeout)
+    s.sendall(f"GET {path} HTTP/1.1\r\nHost: {CAM}\r\nConnection: close\r\n\r\n".encode())
+    s.settimeout(timeout)
+    data = b""
+    while True:
+        c = s.recv(4096)
+        if not c:
+            break
+        data += c
+    s.close()
+    return data.split(b"\r\n\r\n", 1)[-1].decode(errors="replace")
+
+
+def api_int(path: str, key: str) -> int:
+    m = re.search(rf'"{key}":(-?\d+)', api(path))
+    return int(m.group(1)) if m else -1
+
+
+def grab_luma() -> float:
+    """Mean luma (0-255) of one fresh MJPEG frame."""
+    for _clen, body in read_mjpeg_frames(duration_s=6.0, recv_size=65536, delay_s=0):
+        h = Image.open(io.BytesIO(body)).convert("L").histogram()
+        n = sum(h)
+        return sum(i * h[i] for i in range(256)) / n if n else -1.0
+    return -1.0
+
+
+def test_exposure_reacts_to_fps() -> None:
+    """A live fps change (web-UI 'Apply' path, no restart) must move the sensor
+    rate, so `exposure: max` re-pins to the new frame budget. Regression: the
+    sensor rate used to update only at boot, so max stayed at the boot budget."""
+    name = "exposure-fps-react"
+    mp4_was = api_int("/api/mp4", "enable")
+    mjpeg_fps_was = api_int("/api/mjpeg", "fps")
+    try:
+        api("/api/mp4?enable=false")  # mjpeg alone drives the sensor rate
+        api("/api/mjpeg?enable=true&fps=20"); time.sleep(2)
+        api("/api/exposure?value=max"); time.sleep(2)
+        hi = api_int("/api/gain", "shutter_us")          # ~ 1e6/20 = 50000
+        api("/api/mjpeg?fps=5"); time.sleep(2)            # live Apply, no restart
+        api("/api/exposure?value=max"); time.sleep(2)
+        lo = api_int("/api/gain", "shutter_us")          # must react -> ~ 1e6/5 = 200000
+        ok = hi > 0 and lo > hi * 2
+        report(name, ok, f"max shutter @20fps={hi}us -> @5fps={lo}us "
+                         f"(expect ~50000 -> ~200000; no restart)")
+    finally:
+        if mp4_was == 1:
+            api("/api/mp4?enable=true")
+        if mjpeg_fps_was > 0:
+            api(f"/api/mjpeg?fps={mjpeg_fps_was}")
+        api("/api/exposure?value=0")
+
+
+def test_exposure_brightness() -> None:
+    """With AE gain pinned to 1x, image brightness must track the shutter — a
+    longer fixed exposure is visibly brighter. Guards against trusting the
+    shutter read-back when the actual integration does not change."""
+    name = "exposure-brightness"
+    try:
+        api("/api/gain?min_gain=1024&max_gain=1024&min_isp_gain=1024&max_isp_gain=1024")
+        api("/api/exposure?value=2000"); time.sleep(2)
+        dim = grab_luma()
+        api("/api/exposure?value=20000"); time.sleep(2)
+        bright = grab_luma()
+        ok = dim >= 0 and bright > dim + 5
+        report(name, ok, f"luma @2ms={dim:.1f} -> @20ms={bright:.1f} "
+                         f"(gain pinned 1x; longer shutter must brighten)")
+    finally:
+        api("/api/gain?min_gain=0&max_gain=0&min_isp_gain=0&max_isp_gain=0")
+        api("/api/exposure?value=0")
+
+
 only = set(sys.argv[2:])  # optional test names to run, e.g. mjpeg-fast rtsp-tcp
 
 
@@ -203,6 +278,14 @@ if wanted("rtsp-udp"):
 if wanted("fmp4-http"):
     print("[5/5] fMP4 over HTTP...")
     test_fmp4()
+
+if wanted("exposure-fps-react"):
+    print("[6/7] Exposure budget reacts to a live fps change (no restart)...")
+    test_exposure_reacts_to_fps()
+
+if wanted("exposure-brightness"):
+    print("[7/7] Exposure brightness tracks shutter (gain pinned 1x)...")
+    test_exposure_brightness()
 
 print()
 failed = [r for r in results if not r[1]]

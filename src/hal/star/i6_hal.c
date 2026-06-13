@@ -528,6 +528,27 @@ unsigned int i6_sensor_frame_budget(void)
     return frc_shutter_cap(_i6_snr_framerate, 0);
 }
 
+int i6_sensor_set_rate(char framerate)
+{
+    int ret;
+
+    if (framerate <= 0 || framerate == _i6_snr_framerate)
+        return EXIT_SUCCESS;
+
+    /* Narrow the shutter to fit both the current and the new frame period
+       before changing the rate: the SDK silently ignores a rate increase
+       while the applied shutter still exceeds the shorter new period. */
+    unsigned int safe = MIN(frc_shutter_cap(_i6_snr_framerate, 0),
+                            frc_shutter_cap(framerate, 0));
+    if (ret = i6_sensor_shutter_limit(safe, safe))
+        return ret;
+    if (ret = i6_snr.fnSetFramerate(_i6_snr_index, framerate))
+        return ret;
+    _i6_snr_framerate = framerate;
+
+    return EXIT_SUCCESS;
+}
+
 int i6_sensor_gain_limits_get(hal_gainlimits *limits)
 {
     int ret;
