@@ -20,6 +20,8 @@ test_rtmp_chunk_DEPS := $(SRCDIR)/rtmp.c
 test_http_headers_SRC := $(SRCDIR)/http_headers.c $(SRCDIR)/hal/tools.c
 test_config_bounds_SRC := $(SRCDIR)/hal/config.c $(SRCDIR)/hal/tools.c
 test_http_post_SRC := $(SRCDIR)/http_post.c
+test_record_SRC := $(SRCDIR)/record.c $(SRCDIR)/fmt/mp4.c $(SRCDIR)/fmt/bitbuf.c \
+                   $(SRCDIR)/fmt/moof.c $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/nal.c
 
 .PHONY: all clean
 all: $(BINS)
