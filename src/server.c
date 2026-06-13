@@ -1512,20 +1512,32 @@ void respond_request(http_request_t *req) {
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
                 if (EQUALS(key, "exposure") || EQUALS(key, "value")) {
-                    int result = strtol(value, &remain, 10);
-                    if (remain != value && result >= 0 && result <= 333333) {
-                        app_config.exposure = result;
-                        set_exposure(result);
+                    if (EQUALS(value, "max")) {
+                        app_config.exposure = EXPOSURE_MAX;
+                        set_exposure(EXPOSURE_MAX);
+                    } else {
+                        int result = strtol(value, &remain, 10);
+                        if (remain != value && result >= 0 && result <= 333333) {
+                            app_config.exposure = result;
+                            set_exposure(result);
+                        }
                     }
                 }
             }
         }
+        /* Report the live (effective) shutter so a clamped value is visible,
+           plus the policy mode. */
+        hal_aestate ae;
+        const char *mode = app_config.exposure == 0 ? "auto" :
+            app_config.exposure == EXPOSURE_MAX ? "max" : "fixed";
+        unsigned int effUs = !get_ae_state(&ae) ? ae.shutterUs :
+            (app_config.exposure == EXPOSURE_MAX ? 0 : app_config.exposure);
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/json;charset=UTF-8\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "{\"exposure\":%u}", app_config.exposure);
+            "{\"exposure\":%u,\"mode\":\"%s\"}", effUs, mode);
         send_and_close(req->clntFd, response, respLen);
         return;
     }

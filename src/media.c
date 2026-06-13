@@ -275,6 +275,15 @@ void set_grayscale(bool active) {
     pthread_mutex_unlock(&chnMtx);
 }
 
+static unsigned int get_frame_budget_us(void) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6:  return i6_sensor_frame_budget();
+#endif
+    }
+    return 0;
+}
+
 int set_exposure(unsigned int micros) {
     int ret = -1;
     pthread_mutex_lock(&chnMtx);
@@ -284,6 +293,15 @@ int set_exposure(unsigned int micros) {
 #endif
     }
     pthread_mutex_unlock(&chnMtx);
+
+    /* Latch a fixed request down to the frame budget: the frame rate is the
+       contract, so the stored value reflects what it actually allows and
+       never silently rises if the rate is later lowered. */
+    if (!ret && app_config.exposure != 0 && app_config.exposure != EXPOSURE_MAX) {
+        unsigned int budget = get_frame_budget_us();
+        if (budget && app_config.exposure > budget)
+            app_config.exposure = budget;
+    }
     return ret;
 }
 
@@ -916,15 +934,19 @@ int sdk_start(void) {
 #endif
         }
 
-    if (app_config.exposure > 0) {
-        ret = set_exposure(app_config.exposure);
-        if (ret)
-            HAL_DANGER("media", "Failed to set exposure %uus: %#x\n",
-                app_config.exposure, ret);
-        else
-            HAL_INFO("media", "Fixed exposure set to %uus\n",
-                app_config.exposure);
-    }
+    /* Apply the exposure policy for the configured frame rate, including the
+       auto default so its shutter ceiling is tied to the frame budget. */
+    ret = set_exposure(app_config.exposure);
+    if (ret) {
+        if (app_config.exposure)
+            HAL_DANGER("media", "Failed to set exposure: %#x\n", ret);
+    } else if (app_config.exposure == 0)
+        HAL_INFO("media", "Exposure: auto (shutter capped to frame budget)\n");
+    else if (app_config.exposure == EXPOSURE_MAX)
+        HAL_INFO("media", "Exposure: max (pinned to full frame time)\n");
+    else
+        HAL_INFO("media", "Exposure: fixed %uus (clamped to frame budget)\n",
+            app_config.exposure);
 
     {
         hal_gainlimits request = {

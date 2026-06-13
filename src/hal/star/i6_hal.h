@@ -46,6 +46,7 @@ int i6_region_setbitmap(int handle, hal_bitmap *bitmap);
 
 int i6_sensor_ae_query(hal_aestate *state);
 int i6_sensor_exposure(unsigned int micros);
+unsigned int i6_sensor_frame_budget(void);
 int i6_sensor_gain_limits_get(hal_gainlimits *limits);
 int i6_sensor_gain_limits_set(const hal_gainlimits *limits);
 
