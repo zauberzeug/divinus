@@ -99,7 +99,7 @@ void send_mp4_to_record(hal_vidstream *stream, char isH265) {
         unsigned int pack_len = pack->length - pack->offset;
         unsigned char *pack_data = pack->data + pack->offset;
 
-        for (char j = 0; j < pack->naluCnt; j++) {
+        for (int j = 0; j < pack->naluCnt; j++) {
             if ((pack->nalu[j].type == NalUnitType_SPS || pack->nalu[j].type == NalUnitType_SPS_HEVC) 
                 && pack->nalu[j].length >= 4 && pack->nalu[j].length <= UINT16_MAX)
                 mp4_set_sps(pack_data + pack->nalu[j].offset + 4, pack->nalu[j].length - 4, isH265);

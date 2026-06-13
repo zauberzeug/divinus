@@ -30,6 +30,7 @@ enum ConfigError {
     CONFIG_PARAM_ISNT_FLOAT,
     CONFIG_PARAM_ISNT_IN_RANGE,
     CONFIG_PARAM_INVALID_FORMAT,
+    CONFIG_PARAM_TOO_LONG,
     CONFIG_ENUM_INCORRECT_STRING,
     CONFIG_REGEX_ERROR,
     CONFIG_CANT_OPEN_PROC_CMDLINE,
@@ -44,6 +45,9 @@ enum ConfigError section_pos(
 enum ConfigError parse_param_value(
     struct IniConfig *ini, const char *section, const char *param_name,
     char *param_value);
+enum ConfigError parse_param_value_n(
+    struct IniConfig *ini, const char *section, const char *param_name,
+    char *param_value, size_t size);
 enum ConfigError parse_double(
     struct IniConfig *ini, const char *section, const char *param_name,
     const double min, const double max, double *double_value);

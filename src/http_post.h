@@ -14,5 +14,6 @@
 #include "hal/macros.h"
 #include "jpeg.h"
 
+int http_post_connect(const struct addrinfo *addrs);
 void http_post_start();
 void http_post_stop();
