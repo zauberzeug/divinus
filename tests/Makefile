@@ -1,7 +1,8 @@
 # Host-native unit tests: one executable per tests/unit/test_*.c, built with
 # sanitizers and warnings. Each test lists the src/ objects it needs via a
-# test-local <name>_SRC. src/lib/ and most of src/hal/ are vendor-coupled and
-# not host-testable; plain-C exceptions like hal/tools.c link fine.
+# test-local <name>_SRC. Vendor-bound code (src/hal/<vendor>/, src/lib/) is
+# not host-testable; pure policy modules (src/hal/frc.c) and plain-C
+# exceptions (hal/tools.c) link fine.
 
 CC      ?= cc
 SRCDIR  := ../src
@@ -23,6 +24,7 @@ test_http_post_SRC := $(SRCDIR)/http_post.c
 test_record_SRC := $(SRCDIR)/record.c $(SRCDIR)/fmt/mp4.c $(SRCDIR)/fmt/bitbuf.c \
                    $(SRCDIR)/fmt/moof.c $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/nal.c
 test_sock_send_SRC := $(SRCDIR)/sock_send.c
+test_frc_SRC := $(SRCDIR)/hal/frc.c
 
 .PHONY: all clean
 all: $(BINS)
