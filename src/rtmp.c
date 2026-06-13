@@ -133,8 +133,16 @@ static int rtmp_send_packet(int message_type, int stream_id, const void *data, i
         remaining -= to_send;
 
         if (remaining > 0) {
-            uint8_t h = (3 << 6) | (cs_id & 0x3F);
-            if (send_data(&h, 1) < 0) return -1;
+            uint8_t h[5];
+            int hlen = 0;
+            h[hlen++] = (3 << 6) | (cs_id & 0x3F);
+            if (timestamp >= 0xFFFFFF) {
+                h[hlen++] = (timestamp >> 24) & 0xFF;
+                h[hlen++] = (timestamp >> 16) & 0xFF;
+                h[hlen++] = (timestamp >> 8) & 0xFF;
+                h[hlen++] = timestamp & 0xFF;
+            }
+            if (send_data(h, hlen) < 0) return -1;
         }
     }
     return 0;
