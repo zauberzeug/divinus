@@ -6,9 +6,14 @@
 
 CC      ?= cc
 SRCDIR  := ../src
+# -pthread: sources such as http_post.c pull in libpthread (e.g.
+# pthread_attr_setstacksize). System glibc >= 2.34 folds it into libc so the
+# link succeeds without it, but toolchains with a split libpthread (the conda
+# gcc used in CI) need it explicitly or the link fails with
+# "DSO missing from command line".
 CFLAGS  := -O1 -g -std=gnu11 -I$(SRCDIR) -Wall -Wextra -Wno-unused-parameter \
-           -fsanitize=address,undefined -fno-omit-frame-pointer
-LDFLAGS := -fsanitize=address,undefined
+           -fsanitize=address,undefined -fno-omit-frame-pointer -pthread
+LDFLAGS := -fsanitize=address,undefined -pthread
 
 TESTS := $(basename $(notdir $(wildcard unit/test_*.c)))
 BINS  := $(addprefix unit/,$(TESTS))
