@@ -8,7 +8,14 @@
 #define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
 #define HTTP_SEND_POLL_MS 25
 #define HTTP_SEND_POLL_TRIES 4
-#define HTTP_SEND_DEADLINE_MS 33
+/* Upper bound on how long the venc fan-out thread may block on one slow
+   client before dropping it. This is the head-of-line ceiling: a stalled
+   receiver delays every other client's frame by at most this long. 33ms
+   (~one frame at 30fps) dropped clients on brief congestion bumps; 100ms
+   rides out a transient hiccup while still keeping a hard cap. Stays within
+   HTTP_SEND_POLL_TRIES * HTTP_SEND_POLL_MS so the try count and the wall
+   clock expire together. */
+#define HTTP_SEND_DEADLINE_MS 100
 /* Caps kernel send buffering so a lagging receiver hits EAGAIN within a
    couple of frames instead of accumulating seconds of stale video */
 #define HTTP_SNDBUF_SIZE (256 * 1024)
