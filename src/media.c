@@ -326,8 +326,11 @@ void refresh_sensor_rate(void) {
                       app_config.mjpeg_enable ? app_config.mjpeg_fps : 0);
     if (target <= 0)
         return;
-    if (!set_sensor_rate(target))
-        set_exposure(app_config.exposure);
+    /* Re-pin exposure unconditionally: on success it re-derives against the new
+       budget; on a failed rate change the rate is unchanged, so it still
+       restores a correct shutter (undoing the transient narrowing). */
+    set_sensor_rate(target);
+    set_exposure(app_config.exposure);
 }
 
 int get_gain_limits(hal_gainlimits *limits) {

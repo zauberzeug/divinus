@@ -192,8 +192,12 @@ def api(path: str, timeout: float = 8.0) -> str:
 
 
 def api_int(path: str, key: str) -> int:
-    m = re.search(rf'"{key}":(-?\d+)', api(path))
+    m = re.search(rf'"{key}":(-?\d+)', api(path))  # -1 = absent/unreadable
     return int(m.group(1)) if m else -1
+
+
+def api_bool(path: str, key: str) -> bool:
+    return re.search(rf'"{key}":true', api(path)) is not None
 
 
 def grab_luma() -> float:
@@ -210,7 +214,7 @@ def test_exposure_reacts_to_fps() -> None:
     rate, so `exposure: max` re-pins to the new frame budget. Regression: the
     sensor rate used to update only at boot, so max stayed at the boot budget."""
     name = "exposure-fps-react"
-    mp4_was = api_int("/api/mp4", "enable")
+    mp4_was = api_bool("/api/mp4", "enable")
     mjpeg_fps_was = api_int("/api/mjpeg", "fps")
     try:
         api("/api/mp4?enable=false")  # mjpeg alone drives the sensor rate
@@ -224,7 +228,7 @@ def test_exposure_reacts_to_fps() -> None:
         report(name, ok, f"max shutter @20fps={hi}us -> @5fps={lo}us "
                          f"(expect ~50000 -> ~200000; no restart)")
     finally:
-        if mp4_was == 1:
+        if mp4_was:
             api("/api/mp4?enable=true")
         if mjpeg_fps_was > 0:
             api(f"/api/mjpeg?fps={mjpeg_fps_was}")
