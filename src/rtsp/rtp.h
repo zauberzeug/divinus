@@ -62,6 +62,10 @@ static inline int __split_nal(unsigned char *buf, unsigned char **nalptr, size_t
     int i;
     int start = -1;
 
+    /* Guard the size_t loop bound below (max_len - 5 underflows for < 5). */
+    if (max_len < 5)
+        return FAILURE;
+
     for(i = (*nalptr) - buf + *p_len;i<max_len-5;i++) {
         if(buf[i] == 0x00 &&
                 buf[i+1] == 0x00 &&
@@ -85,7 +89,7 @@ static inline int __split_nal(unsigned char *buf, unsigned char **nalptr, size_t
     }
 
     *nalptr = &(buf[start]);
-    *p_len = max_len + 2 - start;
+    *p_len = max_len - start;
 
     return SUCCESS;
 }
