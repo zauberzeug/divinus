@@ -12,8 +12,11 @@ LDFLAGS := -fsanitize=address,undefined
 TESTS := $(basename $(notdir $(wildcard unit/test_*.c)))
 BINS  := $(addprefix unit/,$(TESTS))
 
-# Per-test source dependencies (besides the test file itself).
+# Per-test source dependencies: <name>_SRC is linked in, <name>_DEPS only
+# triggers rebuilds (for sources a test #includes rather than links).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
+test_rtmp_chunk_SRC := $(SRCDIR)/fmt/flv.c $(SRCDIR)/fmt/amf.c $(SRCDIR)/fmt/bitbuf.c
+test_rtmp_chunk_DEPS := $(SRCDIR)/rtmp.c
 test_http_headers_SRC := $(SRCDIR)/http_headers.c $(SRCDIR)/hal/tools.c
 test_config_bounds_SRC := $(SRCDIR)/hal/config.c $(SRCDIR)/hal/tools.c
 
@@ -23,7 +26,7 @@ all: $(BINS)
 	[ $$fail -eq 0 ] && echo "all unit tests passed" || { echo "UNIT TESTS FAILED"; exit 1; }
 
 .SECONDEXPANSION:
-unit/%: unit/%.c $$($$*_SRC)
+unit/%: unit/%.c $$($$*_SRC) $$($$*_DEPS)
 	$(CC) $(CFLAGS) -o $@ $< $($*_SRC) $(LDFLAGS)
 
 clean:

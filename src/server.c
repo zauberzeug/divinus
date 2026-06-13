@@ -247,14 +247,14 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
             if (client_fds[c].sockFd < 0) continue;
             if (client_fds[c].type != STREAM_H26X) continue;
 
-            for (char j = 0; j < pack->naluCnt; j++) {
+            for (int j = 0; j < pack->naluCnt; j++) {
                 if (client_fds[c].nalCnt == 0 &&
                     pack->nalu[j].type != NalUnitType_SPS &&
                     pack->nalu[j].type != NalUnitType_SPS_HEVC)
                     continue;
 
                 char len_buf[16];
-                int len_size = sprintf(len_buf, "%zX\r\n", pack->nalu[j].length);
+                int len_size = sprintf(len_buf, "%X\r\n", pack->nalu[j].length);
 
                 struct iovec iov[3];
                 iov[0].iov_base = len_buf;
@@ -289,7 +289,7 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
         hal_vidpack *pack = &stream->pack[i];
         unsigned char *pack_data = pack->data + pack->offset;
 
-        for (char j = 0; j < pack->naluCnt; j++) {
+        for (int j = 0; j < pack->naluCnt; j++) {
             if ((pack->nalu[j].type == NalUnitType_SPS || pack->nalu[j].type == NalUnitType_SPS_HEVC)
                 && pack->nalu[j].length >= 4 && pack->nalu[j].length <= UINT16_MAX)
                 mp4_set_sps(pack_data + pack->nalu[j].offset + 4, pack->nalu[j].length - 4, isH265);
@@ -316,7 +316,7 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
                 err = mp4_get_header(&header_buf);
                 chk_err_continue if (!header_buf.offset) continue;
                 ssize_t len_size =
-                    sprintf(len_buf, "%zX\r\n", header_buf.offset);
+                    sprintf(len_buf, "%X\r\n", header_buf.offset);
                 if (send_to_client(i, len_buf, len_size) < 0)
                     continue;
                 if (send_to_client(i, header_buf.buf, header_buf.offset) < 0)
@@ -391,7 +391,7 @@ void send_pcm_to_client(hal_audframe *frame) {
         if (client_fds[i].type != STREAM_PCM) continue;
 
         char len_buf[50];
-        ssize_t len_size = sprintf(len_buf, "%zX\r\n", frame->length[0]);
+        ssize_t len_size = sprintf(len_buf, "%X\r\n", frame->length[0]);
         if (send_to_client(i, len_buf, len_size) < 0)
             continue; // send <SIZE>\r\n
         if (send_to_client(i, frame->data[0], frame->length[0]) < 0)
@@ -478,7 +478,7 @@ void *send_jpeg_thread(void *vargp) {
     int buf_len = sprintf(
         buf, "HTTP/1.1 200 OK\r\n"
         "Content-Type: image/jpeg\r\n"
-        "Content-Length: %lu\r\n"
+        "Content-Length: %u\r\n"
         "Connection: close\r\n\r\n",
         jpeg.jpegSize);
     send_to_fd(task->client_fd, buf, buf_len);
