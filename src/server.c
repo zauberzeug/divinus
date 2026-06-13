@@ -19,6 +19,9 @@
 /* One log line (not one per frame) once an MJPEG client has been skipped
    this many frames in a row */
 #define MJPEG_SKIP_LOG_THRESHOLD 100
+/* Same idea for an H26x client repeatedly resynced to a keyframe because it
+   cannot keep up with the stream bitrate */
+#define H26X_RESYNC_LOG_THRESHOLD 100
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -49,6 +52,7 @@ struct {
     struct Mp4State mp4;
     unsigned int nalCnt;
     unsigned int skipCnt;
+    bool waiting_key;
 } client_fds[HTTP_MAX_CLIENTS];
 
 typedef struct {
@@ -231,6 +235,7 @@ static bool register_stream_client(int sockFd, enum StreamType type,
         client_fds[i].type = type;
         client_fds[i].nalCnt = 0;
         client_fds[i].skipCnt = 0;
+        client_fds[i].waiting_key = true;
         client_fds[i].mp4.header_sent = false;
         if (type == STREAM_MP4)
             mp4_clients++;
@@ -258,10 +263,18 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
             if (client_fds[c].type != STREAM_H26X) continue;
 
             for (int j = 0; j < pack->naluCnt; j++) {
-                if (client_fds[c].nalCnt == 0 &&
-                    pack->nalu[j].type != NalUnitType_SPS &&
-                    pack->nalu[j].type != NalUnitType_SPS_HEVC)
-                    continue;
+                /* Resync gate: a client that just connected, or that fell
+                   behind and was dropped to a keyframe, resumes only at the
+                   next SPS (which precedes an IDR). Its NALs are skipped
+                   until then, so the decoder jumps ahead to fresh video
+                   instead of replaying a stale backlog -- inter-frame coding
+                   makes any earlier resume point undecodable anyway. */
+                if (client_fds[c].waiting_key) {
+                    if (pack->nalu[j].type != NalUnitType_SPS &&
+                        pack->nalu[j].type != NalUnitType_SPS_HEVC)
+                        continue;
+                    client_fds[c].waiting_key = false;
+                }
 
                 char len_buf[16];
                 int len_size = sprintf(len_buf, "%X\r\n", pack->nalu[j].length);
@@ -274,9 +287,28 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
                 iov[2].iov_base = (void*)"\r\n";
                 iov[2].iov_len = 2;
 
-                if (sendv_to_client(c, iov, 3) < 0)
+                /* Complete-or-skip, like the MJPEG path: a NAL chunk reaches
+                   the kernel whole or not at all (never a torn chunk). On
+                   backpressure we don't disconnect -- we arm a keyframe
+                   resync and stop feeding this client the rest of the access
+                   unit, so it drops to a lower frame rate and recovers at the
+                   next IDR. Only a dead/clearly-stuck peer is closed. */
+                enum SockSendResult r =
+                    sock_send_frame_or_skip(client_fds[c].sockFd, iov, 3);
+                if (r == SOCK_SEND_SKIPPED) {
+                    client_fds[c].waiting_key = true;
+                    if (++client_fds[c].skipCnt == H26X_RESYNC_LOG_THRESHOLD)
+                        HAL_INFO("server", "H26x client %u is not keeping up, "
+                            "resynced to a keyframe %u times in a row\n",
+                            c, client_fds[c].skipCnt);
                     break;
+                }
+                if (r == SOCK_SEND_DEAD) {
+                    free_client(c);
+                    break;
+                }
 
+                client_fds[c].skipCnt = 0;
                 client_fds[c].nalCnt++;
                 if (client_fds[c].nalCnt == 300) {
                     char end[] = "0\r\n\r\n";
