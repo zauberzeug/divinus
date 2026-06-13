@@ -1,2 +1,2 @@
-/unit/test_*
-!/unit/test_*.c
+unit/test_*
+!unit/test_*.c

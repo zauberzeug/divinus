@@ -1,6 +1,7 @@
 # Host-native unit tests: one executable per tests/unit/test_*.c, built with
 # sanitizers and warnings. Each test lists the src/ objects it needs via a
-# test-local <name>_SRC. src/hal/ and src/lib/ are not host-testable.
+# test-local <name>_SRC. src/lib/ and most of src/hal/ are vendor-coupled and
+# not host-testable; plain-C exceptions like hal/tools.c link fine.
 
 CC      ?= cc
 SRCDIR  := ../src
@@ -11,8 +12,16 @@ LDFLAGS := -fsanitize=address,undefined
 TESTS := $(basename $(notdir $(wildcard unit/test_*.c)))
 BINS  := $(addprefix unit/,$(TESTS))
 
-# Per-test source dependencies (besides the test file itself).
+# Per-test source dependencies: <name>_SRC is linked in, <name>_DEPS only
+# triggers rebuilds (for sources a test #includes rather than links).
 test_nal_SRC := $(SRCDIR)/fmt/nal.c
+test_rtmp_chunk_SRC := $(SRCDIR)/fmt/flv.c $(SRCDIR)/fmt/amf.c $(SRCDIR)/fmt/bitbuf.c
+test_rtmp_chunk_DEPS := $(SRCDIR)/rtmp.c
+test_http_headers_SRC := $(SRCDIR)/http_headers.c $(SRCDIR)/hal/tools.c
+test_config_bounds_SRC := $(SRCDIR)/hal/config.c $(SRCDIR)/hal/tools.c
+test_http_post_SRC := $(SRCDIR)/http_post.c
+test_record_SRC := $(SRCDIR)/record.c $(SRCDIR)/fmt/mp4.c $(SRCDIR)/fmt/bitbuf.c \
+                   $(SRCDIR)/fmt/moof.c $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/nal.c
 test_sock_send_SRC := $(SRCDIR)/sock_send.c
 
 .PHONY: all clean
@@ -21,7 +30,7 @@ all: $(BINS)
 	[ $$fail -eq 0 ] && echo "all unit tests passed" || { echo "UNIT TESTS FAILED"; exit 1; }
 
 .SECONDEXPANSION:
-unit/%: unit/%.c $$($$*_SRC)
+unit/%: unit/%.c $$($$*_SRC) $$($$*_DEPS)
 	$(CC) $(CFLAGS) -o $@ $< $($*_SRC) $(LDFLAGS)
 
 clean:

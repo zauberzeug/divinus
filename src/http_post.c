@@ -2,67 +2,76 @@
 
 pthread_t httpPostPid = 0;
 
+int http_post_connect(const struct addrinfo *addrs) {
+    for (const struct addrinfo *r = addrs; r != NULL; r = r->ai_next) {
+        int sockfd = socket(r->ai_family, r->ai_socktype, r->ai_protocol);
+        if (sockfd == -1)
+            continue;
+        if (!connect(sockfd, r->ai_addr, r->ai_addrlen))
+            return sockfd;
+        close(sockfd);
+    }
+    return -1;
+}
+
 int http_post_send(hal_jpegdata *jpeg) {
     char *host_addr = app_config.http_post_host;
 
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1)
-        HAL_ERROR("http_post", "Socket creation failed!\n");
-
+    struct addrinfo hints = {.ai_family = AF_UNSPEC, .ai_socktype = SOCK_STREAM};
     struct addrinfo *server_addr = NULL;
-    int ret = getaddrinfo(host_addr, "80", NULL, &server_addr);
-    if (!ret) {
-        const struct addrinfo *r;
-        for (r = server_addr; r != NULL || ret != 0; r = r->ai_next)
-            ret = connect(sockfd, server_addr->ai_addr, server_addr->ai_addrlen);
-        HAL_INFO("http_post", "Successfully connected to %s!\n", host_addr);
+    if (getaddrinfo(host_addr, "80", &hints, &server_addr))
+        HAL_ERROR("http_post", "Resolving %s failed!\n", host_addr);
 
-        char time_url[256];
-        {
-            time_t timer;
-            time(&timer);
-            struct tm tm_buf, *tm_info = localtime_r(&timer, &tm_buf);
-            size_t time_len = strftime(
-                time_url, sizeof(time_url), app_config.http_post_url, tm_info);
-            time_url[time_len++] = 0;
-        }
-        {
-            char header_buf[1024];
+    int sockfd = http_post_connect(server_addr);
+    freeaddrinfo(server_addr);
+    if (sockfd == -1)
+        HAL_ERROR("http_post", "Connecting to %s failed!\n", host_addr);
+    HAL_INFO("http_post", "Successfully connected to %s!\n", host_addr);
+
+    char time_url[256];
+    {
+        time_t timer;
+        time(&timer);
+        struct tm tm_buf, *tm_info = localtime_r(&timer, &tm_buf);
+        size_t time_len = strftime(
+            time_url, sizeof(time_url), app_config.http_post_url, tm_info);
+        time_url[time_len++] = 0;
+    }
+    {
+        char header_buf[1024];
+        int buf_len = sprintf(
+            header_buf,
+            "PUT %s HTTP/1.1\r\n"
+            "Host: %s\r\n"
+            "User-Agent: Camera openipc.org\r\n"
+            "Accept: */*\r\n"
+            "Content-Type: image/jpeg\r\n"
+            "Content-Length: %u\r\n",
+            time_url, host_addr, jpeg->jpegSize);
+        write(sockfd, header_buf, buf_len);
+
+        if (strlen(app_config.http_post_login) > 0 &&
+            strlen(app_config.http_post_password) > 0) {
+            char log_pass[128];
+            int log_pass_len = sprintf(
+                log_pass, "%s:%s", app_config.http_post_login,
+                app_config.http_post_password);
+            char base64buf[1024];
+            int base64_len =
+                base64_encode(base64buf, log_pass, log_pass_len);
+            base64buf[base64_len++] = 0;
             int buf_len = sprintf(
-                header_buf,
-                "PUT %s HTTP/1.1\r\n"
-                "Host: %s\r\n"
-                "User-Agent: Camera openipc.org\r\n"
-                "Accept: */*\r\n"
-                "Content-Type: image/jpeg\r\n"
-                "Content-Length: %u\r\n",
-                time_url, host_addr, jpeg->jpegSize);
+                header_buf, "Authorization: Basic %s\r\n", base64buf);
             write(sockfd, header_buf, buf_len);
-
-            if (strlen(app_config.http_post_login) > 0 &&
-                strlen(app_config.http_post_password) > 0) {
-                char log_pass[128];
-                int log_pass_len = sprintf(
-                    log_pass, "%s:%s", app_config.http_post_login,
-                    app_config.http_post_password);
-                char base64buf[1024];
-                int base64_len =
-                    base64_encode(base64buf, log_pass, log_pass_len);
-                base64buf[base64_len++] = 0;
-                int buf_len = sprintf(
-                    header_buf, "Authorization: Basic %s\r\n", base64buf);
-                write(sockfd, header_buf, buf_len);
-            }
-            write(sockfd, "\r\n", 2);
-            write(sockfd, jpeg->data, jpeg->jpegSize);
-
-            char replay[1024];
-            int len = read(sockfd, replay, 1024);
         }
+        write(sockfd, "\r\n", 2);
+        write(sockfd, jpeg->data, jpeg->jpegSize);
+
+        char replay[1024];
+        int len = read(sockfd, replay, 1024);
     }
 
     close(sockfd);
-    if (server_addr) freeaddrinfo(server_addr);
 
     return EXIT_SUCCESS;
 }
