@@ -171,13 +171,16 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
 {
     char sdp[__RTSP_TCP_BUF_SIZE];
 
-    const char baseRtp[] =
+    /* o= session-version bumps whenever the parameter sets are invalidated
+       (encoder reconfig), so clients can tell the description changed. */
+    char baseRtp[160];
+    snprintf(baseRtp, sizeof(baseRtp),
         "v=0\r\n"
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "o=- 0 %u IN IP4 127.0.0.1\r\n"
         "s=librtsp\r\n"
         "c=IN IP4 0.0.0.0\r\n"
         "t=0 0\r\n"
-        "a=range:npt=0-\r\n";
+        "a=range:npt=0-\r\n", h->sess_version);
     char audioRtp[256] = "\r\n";
     char audioRtpfmt[16];
 
@@ -199,26 +202,23 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
     }
 
     if (h->isH265 &&
-        h->sprop_vps_b64 && h->sprop_sps_b64 && h->sprop_sps_b16 && h->sprop_pps_b64) {
+        h->sprop_vps_b64 && h->sprop_sps_b64 && h->sprop_pps_b64) {
         DASSERT(h->sprop_vps_b64->result, return);
         DASSERT(h->sprop_sps_b64->result, return);
-        DASSERT(h->sprop_sps_b16->result, return);
         DASSERT(h->sprop_pps_b64->result, return);
 
         DBG("VPS BASE64:%s\n", h->sprop_vps_b64->result);
         DBG("SPS BASE64:%s\n", h->sprop_sps_b64->result);
-        DBG("SPS BASE16:%s\n", h->sprop_sps_b16->result);
         DBG("PPS BASE64:%s\n", h->sprop_pps_b64->result);
 
+        /* RFC 7798 7.1: separate sprop-vps/sps/pps parameters; H.265 has no
+           profile-level-id or packetization-mode (those are RFC 6184/H.264). */
         snprintf(sdp, __RTSP_TCP_BUF_SIZE- 1,
                 "%sm=video 0 RTP/AVP 96\r\n"
                 "a=control:track=0\r\n"
                 "a=rtpmap:96 H265/90000\r\n"
-                "a=fmtp:96 profile-level-id=%s;"
-                " packetization-mode=1;"
-                " sprop-parameter-sets=%s,%s,%s;%s",
+                "a=fmtp:96 sprop-vps=%s; sprop-sps=%s; sprop-pps=%s%s",
                 baseRtp,
-                h->sprop_sps_b16->result,
                 h->sprop_vps_b64->result,
                 h->sprop_sps_b64->result,
                 h->sprop_pps_b64->result,
@@ -863,6 +863,27 @@ error:
 /******************************************************************************
  *              PUBLIC FUNCTIONS
  ******************************************************************************/
+void rtsp_clear_sprops(rtsp_handle h)
+{
+    /* Drop the cached VPS/SPS/PPS so the next DESCRIBE re-harvests them from the
+       current encoder config (call on any resolution/codec reconfig), and bump
+       the SDP session-version so clients see the description changed. */
+    if (!h)
+        return;
+
+    rtsp_lock(h);
+    mime_encoded_delete(h->sprop_vps_b64);
+    mime_encoded_delete(h->sprop_sps_b64);
+    mime_encoded_delete(h->sprop_sps_b16);
+    mime_encoded_delete(h->sprop_pps_b64);
+    h->sprop_vps_b64 = NULL;
+    h->sprop_sps_b64 = NULL;
+    h->sprop_sps_b16 = NULL;
+    h->sprop_pps_b64 = NULL;
+    h->sess_version++;
+    rtsp_unlock(h);
+}
+
 void rtsp_finish(rtsp_handle h)
 {
     /* close every connections in the handle */
