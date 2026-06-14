@@ -15,17 +15,6 @@ bool frc_pace_due(frc_pacer *pacer, int fps, unsigned long long ptsUs)
     return true;
 }
 
-int frc_effective_fps(int configFps, unsigned int shutterUs)
-{
-    if (configFps <= 0 || shutterUs == 0 || shutterUs <= 1000000u / configFps)
-        return configFps;
-
-    int fps = 1000000 / shutterUs;
-    if (fps < 3)
-        fps = 3;
-    return fps < configFps ? fps : configFps;
-}
-
 unsigned int frc_shutter_cap(int fps, unsigned int shutterUs)
 {
     unsigned int max = shutterUs ? shutterUs : 333333;

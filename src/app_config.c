@@ -110,7 +110,10 @@ int app_config_save(void) {
     fprintf(file, "  mirror: %s\n", app_config.mirror ? "true" : "false");
     fprintf(file, "  flip: %s\n", app_config.flip ? "true" : "false");
     fprintf(file, "  antiflicker: %d\n", app_config.antiflicker);
-    fprintf(file, "  exposure: %u\n", app_config.exposure);
+    if (app_config.exposure == EXPOSURE_MAX)
+        fprintf(file, "  exposure: max\n");
+    else
+        fprintf(file, "  exposure: %u\n", app_config.exposure);
     fprintf(file, "  min_gain: %u\n", app_config.min_gain);
     fprintf(file, "  max_gain: %u\n", app_config.max_gain);
     fprintf(file, "  min_isp_gain: %u\n", app_config.min_isp_gain);
@@ -400,7 +403,14 @@ enum ConfigError app_config_parse(void) {
     if (err != CONFIG_OK)
         goto RET_ERR;
     parse_int(&ini, "isp", "antiflicker", -1, 60, &app_config.antiflicker);
-    parse_int(&ini, "isp", "exposure", 0, 333333, &app_config.exposure);
+    {   /* exposure: 0 = auto, max = full frame time, N = fixed us */
+        char expval[16];
+        if (parse_param_value_n(&ini, "isp", "exposure", expval,
+                sizeof(expval)) == CONFIG_OK && EQUALS(expval, "max"))
+            app_config.exposure = EXPOSURE_MAX;
+        else
+            parse_int(&ini, "isp", "exposure", 0, 1000000, &app_config.exposure);
+    }
     parse_uint32(&ini, "isp", "min_gain", 0, UINT_MAX, &app_config.min_gain);
     parse_uint32(&ini, "isp", "max_gain", 0, UINT_MAX, &app_config.max_gain);
     parse_uint32(&ini, "isp", "min_isp_gain", 0, UINT_MAX, &app_config.min_isp_gain);
