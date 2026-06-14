@@ -1518,8 +1518,14 @@ void respond_request(http_request_t *req) {
                         app_config.exposure = EXPOSURE_MAX;
                         set_exposure(EXPOSURE_MAX);
                     } else {
-                        int result = strtol(value, &remain, 10);
-                        if (remain != value && result >= 0 && result <= 333333) {
+                        long result = strtol(value, &remain, 10);
+                        /* No upper reject: a request longer than the frame
+                           budget is clamped to it by the sensor, so a very high
+                           value just means "as long as the frame rate allows".
+                           Bound the stored set point at the 1 fps full frame,
+                           the longest meaningful shutter. */
+                        if (remain != value && result >= 0) {
+                            if (result > 1000000) result = 1000000;
                             app_config.exposure = result;
                             set_exposure(result);
                         }

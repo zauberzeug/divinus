@@ -409,7 +409,7 @@ enum ConfigError app_config_parse(void) {
                 sizeof(expval)) == CONFIG_OK && EQUALS(expval, "max"))
             app_config.exposure = EXPOSURE_MAX;
         else
-            parse_int(&ini, "isp", "exposure", 0, 333333, &app_config.exposure);
+            parse_int(&ini, "isp", "exposure", 0, 1000000, &app_config.exposure);
     }
     parse_uint32(&ini, "isp", "min_gain", 0, UINT_MAX, &app_config.min_gain);
     parse_uint32(&ini, "isp", "max_gain", 0, UINT_MAX, &app_config.max_gain);
