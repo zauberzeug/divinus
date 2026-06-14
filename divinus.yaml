@@ -17,6 +17,13 @@ isp:
   flip: false
   antiflicker: 60
   level3dnr: 0
+  # exposure: the frame rate is the contract, so the shutter never exceeds the
+  # frame period (1e6/fps). 0 = auto (AE free, shutter capped to that budget);
+  # max = shutter pinned to the full frame time (AE then drives gain only);
+  # N = fixed shutter in us, clamped down to the budget if longer. To integrate
+  # longer than one frame, lower the configured fps. Runtime: /api/exposure?
+  # value=max|0|N — GET reports the effective shutter plus the mode.
+  exposure: 0
   # AE gain limits, SigmaStar convention: 1024 == 1x (multiplier = value/1024,
   # dB = 20*log10(value/1024)), 0 keeps the firmware default; ranges are
   # sensor-specific — GET /api/gain reads back the active limits (e.g. IMX335:

@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "hal/config.h"
+#include "hal/frc.h"
 #include "hal/support.h"
 #include "region.h"
 

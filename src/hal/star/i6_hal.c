@@ -21,12 +21,10 @@ i6_snr_pad _i6_snr_pad;
 i6_snr_plane _i6_snr_plane;
 char _i6_snr_framerate, _i6_snr_hdr, _i6_snr_index, _i6_snr_profile;
 
-/* Rate the sensor actually runs (long exposure lowers it below
-   _i6_snr_framerate) plus each channel's configured rate and the pacer
-   that holds intra-only streams at that rate. MI_SYS FRC on a VPE port
-   starves the channel's sibling ports on this SDK, so sub-rate streams
-   are paced by PTS at the venc output instead. */
-static char _i6_snr_fps_eff;
+/* Each channel's configured rate and the pacer that holds intra-only
+   streams at that rate. MI_SYS FRC on a VPE port starves the channel's
+   sibling ports on this SDK, so sub-rate streams are paced by PTS at the
+   venc output instead. */
 static char _i6_chn_fps[I6_VENC_CHN_NUM];
 static frc_pacer _i6_chn_pace[I6_VENC_CHN_NUM];
 
@@ -263,7 +261,6 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
             _i6_snr_framerate = framerate;
             if (ret = i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate))
                 return ret;
-            _i6_snr_fps_eff = framerate;
             break;
         }
         if (_i6_snr_profile < 0)
@@ -496,25 +493,6 @@ int i6_region_setbitmap(int handle, hal_bitmap *bitmap)
     return i6_rgn.fnSetBitmap(handle, &nativeBmp);
 }
 
-static int i6_sensor_rate_update(char framerate)
-{
-    int ret;
-
-    if (framerate == _i6_snr_fps_eff)
-        return EXIT_SUCCESS;
-
-    HAL_INFO("i6_snr", "Sensor rate update %d -> %d\n",
-        _i6_snr_fps_eff, framerate);
-    if (ret = i6_snr.fnSetFramerate(_i6_snr_index, framerate)) {
-        HAL_DANGER("i6_snr", "Setting the sensor rate to %d failed "
-            "with %#x!\n", framerate, ret);
-        return ret;
-    }
-    _i6_snr_fps_eff = framerate;
-
-    return EXIT_SUCCESS;
-}
-
 static int i6_sensor_shutter_limit(unsigned int minUs, unsigned int maxUs)
 {
     int ret;
@@ -529,36 +507,46 @@ static int i6_sensor_shutter_limit(unsigned int minUs, unsigned int maxUs)
 
 int i6_sensor_exposure(unsigned int micros)
 {
+    /* The configured frame rate is the contract: the shutter can never
+       exceed the frame period, so the sensor rate is never traded for
+       exposure time. The full frame period is the longest exposure.
+         micros == 0            auto: AE free up to the frame budget
+         micros == EXPOSURE_MAX  pin the shutter to the full frame budget
+         else                   fixed shutter, clamped to the frame budget */
+    unsigned int budget = frc_shutter_cap(_i6_snr_framerate, 0);
+
+    if (micros == 0)
+        return i6_sensor_shutter_limit(0, budget);
+
+    unsigned int us = micros == EXPOSURE_MAX ?
+        budget : frc_shutter_cap(_i6_snr_framerate, micros);
+    return i6_sensor_shutter_limit(us, us);
+}
+
+unsigned int i6_sensor_frame_budget(void)
+{
+    return frc_shutter_cap(_i6_snr_framerate, 0);
+}
+
+int i6_sensor_set_rate(char framerate)
+{
     int ret;
-    char framerate = frc_effective_fps(_i6_snr_framerate, micros);
-    unsigned int capUs = frc_shutter_cap(framerate, micros);
 
-    /* The frame time must exceed the shutter time: lower the sensor rate
-       before narrowing the shutter window. */
-    if (framerate < _i6_snr_fps_eff &&
-        (ret = i6_sensor_rate_update(framerate)))
+    if (framerate <= 0 || framerate == _i6_snr_framerate)
+        return EXIT_SUCCESS;
+
+    /* Narrow the shutter to fit both the current and the new frame period
+       before changing the rate: the SDK silently ignores a rate increase
+       while the applied shutter still exceeds the shorter new period. */
+    unsigned int safe = MIN(frc_shutter_cap(_i6_snr_framerate, 0),
+                            frc_shutter_cap(framerate, 0));
+    if (ret = i6_sensor_shutter_limit(safe, safe))
         return ret;
+    if (ret = i6_snr.fnSetFramerate(_i6_snr_index, framerate))
+        return ret;
+    _i6_snr_framerate = framerate;
 
-    if (framerate > _i6_snr_fps_eff) {
-        /* The sensor silently keeps its extended frame time while the
-           applied shutter exceeds the new frame period, and the AE only
-           converges to a widened window over many frames: force a shutter
-           that fits the period (3/4 leaves readout margin), give the AE a
-           few of the still-slow frames to apply it, then raise the rate. */
-        unsigned int forceUs = 3 * capUs / 4;
-        if (ret = i6_sensor_shutter_limit(forceUs, forceUs))
-            return ret;
-        for (int settleUs = _i6_snr_fps_eff > 0 ?
-            4000000 / _i6_snr_fps_eff : 0; settleUs > 0; settleUs -= 500000)
-            usleep(MIN(settleUs, 500000));
-        if (ret = i6_sensor_rate_update(framerate))
-            return ret;
-    }
-
-    /* Auto exposure (micros 0) is capped at the configured frame period:
-       the sensor must not trade the configured rate for shutter time
-       unless explicitly asked to with a long fixed exposure. */
-    return i6_sensor_shutter_limit(micros, capUs);
+    return EXIT_SUCCESS;
 }
 
 int i6_sensor_gain_limits_get(hal_gainlimits *limits)

@@ -1103,6 +1103,7 @@ void respond_request(http_request_t *req) {
 
             media_mjpeg_disable();
             if (app_config.mjpeg_enable) media_mjpeg_enable();
+            refresh_sensor_rate();
         }
 
         char mode[5] = "\0";
@@ -1187,6 +1188,7 @@ void respond_request(http_request_t *req) {
 
             media_mp4_disable();
             if (app_config.mp4_enable) media_mp4_enable();
+            refresh_sensor_rate();
         }
 
         char h265[6] = "false";
@@ -1512,20 +1514,38 @@ void respond_request(http_request_t *req) {
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
                 if (EQUALS(key, "exposure") || EQUALS(key, "value")) {
-                    int result = strtol(value, &remain, 10);
-                    if (remain != value && result >= 0 && result <= 333333) {
-                        app_config.exposure = result;
-                        set_exposure(result);
+                    if (EQUALS(value, "max")) {
+                        app_config.exposure = EXPOSURE_MAX;
+                        set_exposure(EXPOSURE_MAX);
+                    } else {
+                        long result = strtol(value, &remain, 10);
+                        /* No upper reject: a request longer than the frame
+                           budget is clamped to it by the sensor, so a very high
+                           value just means "as long as the frame rate allows".
+                           Bound the stored set point at the 1 fps full frame,
+                           the longest meaningful shutter. */
+                        if (remain != value && result >= 0) {
+                            if (result > 1000000) result = 1000000;
+                            app_config.exposure = result;
+                            set_exposure(result);
+                        }
                     }
                 }
             }
         }
+        /* Report the live (effective) shutter so a clamped value is visible,
+           plus the policy mode. */
+        hal_aestate ae;
+        const char *mode = app_config.exposure == 0 ? "auto" :
+            app_config.exposure == EXPOSURE_MAX ? "max" : "fixed";
+        unsigned int effUs = !get_ae_state(&ae) ? ae.shutterUs :
+            (app_config.exposure == EXPOSURE_MAX ? 0 : app_config.exposure);
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/json;charset=UTF-8\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "{\"exposure\":%u}", app_config.exposure);
+            "{\"exposure\":%u,\"mode\":\"%s\"}", effUs, mode);
         send_and_close(req->clntFd, response, respLen);
         return;
     }

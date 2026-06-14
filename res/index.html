@@ -71,6 +71,8 @@
 		.box input, .box select { width: 100%; }
 		input[type=checkbox] { position: absolute; opacity: 0; }
 		input[type=checkbox]:checked + .modal { display: block; z-index: 14; }
+		input[type=checkbox].toggle { position: static; opacity: 1; width: auto; }
+		label[title] { cursor: help; border-bottom: 1px dotted var(--border); }
 		.color-input { height: 2em; border: none; }
 		.range-wrap { display: table; width: 100%; }
 		.range-val { display: table-cell; width: 3em; padding-right: 0.5em; text-align: left; vertical-align: middle; font-weight: 700; }
@@ -181,6 +183,35 @@
 			req.send();
 		}
 
+		function readExposure() {
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(req.responseText);
+				var maxOn = dec.mode == 'max';
+				document.getElementById('exposure_max').checked = maxOn;
+				var inp = document.getElementById('exposure_exposure');
+				inp.disabled = maxOn;
+				/* auto reports the live AE shutter; keep the field at 0 so it
+				   reads as "auto" and re-applying doesn't pin it as fixed. */
+				inp.value = dec.mode == 'auto' ? 0 : dec.exposure;
+			};
+			req.open('GET', '/api/exposure');
+			req.send();
+		}
+
+		function applyExposure() {
+			var maxOn = document.getElementById('exposure_max').checked;
+			var us = document.getElementById('exposure_exposure').value;
+			var val = maxOn ? 'max' : (us === '' ? '0' : us);
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState == 4 && this.status == 200) readExposure();
+			};
+			req.open('GET', '/api/exposure?value=' + encodeURIComponent(val));
+			req.send();
+		}
+
 		function apiRead(endp) {
 			var req = new XMLHttpRequest();
 			req.onreadystatechange = function() {
@@ -277,7 +308,7 @@
 
 		function saveAndRestart() {
 			if (!confirm('Save settings and restart? The stream will briefly disconnect.')) return;
-			apiApply('exposure');
+			applyExposure();
 			apiApply('gain');
 			apiApply('isp');
 			apiApply('mp4');
@@ -383,7 +414,7 @@
 
 		function onLoad() {
 			apiRead('audio');
-			apiRead('exposure');
+			readExposure();
 			apiRead('gain');
 			apiRead('isp');
 			apiRead('jpeg');
@@ -486,8 +517,15 @@
     							<td><input type="number" id="isp_level3dnr" min="0" max="7" placeholder="0-7"></td>
     						</tr>
     						<tr>
-    							<td><label for="exposure_exposure">Exposure&nbsp;(&micro;s)</label></td>
-    							<td><input type="number" id="exposure_exposure" min="0" max="333333" step="1000" placeholder="0 = auto"></td>
+    							<td><label for="exposure_exposure" title="Shutter time in microseconds. 0 = auto (the AE picks it). A fixed value is capped to the frame budget (1000000 / fps) and only ratchets down when you raise the frame rate — to expose longer, lower the frame rate.">Exposure&nbsp;(&micro;s)</label></td>
+    							<td><input type="number" id="exposure_exposure" min="0" max="1000000" step="1000" placeholder="0 = auto"></td>
+    						</tr>
+    						<tr>
+    							<td><label for="exposure_max" title="Pin the shutter to the full frame time and follow the frame rate automatically — the longest exposure that still holds the configured rate.">Max exposure</label></td>
+    							<td><input type="checkbox" class="toggle" id="exposure_max" onchange="document.getElementById('exposure_exposure').disabled = this.checked"></td>
+    						</tr>
+    						<tr>
+    							<td colspan="2"><small>0 = auto &middot; fixed &micro;s is capped to the frame rate &middot; hover the labels for details.</small></td>
     						</tr>
     						<tr>
     							<td><label for="gain_min_gain">Sensor gain min</label></td>
@@ -510,7 +548,7 @@
     						</tr>
     					</table>
     					<a href="javascript:apiApply('isp')" class="btn right">Apply</a>
-    					<a href="javascript:apiApply('exposure')" class="btn right mr1">Apply exposure</a>
+    					<a href="javascript:applyExposure()" class="btn right mr1">Apply exposure</a>
     					<a href="javascript:apiApply('gain')" class="btn right mr1">Apply gain</a>
     				</fieldset>
     			</div>
