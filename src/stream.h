@@ -45,4 +45,4 @@ int udp_stream_init(unsigned short port, const char *mcast_addr);
 void udp_stream_close(void);
 int udp_stream_add_client(const char *host, unsigned short port);
 void udp_stream_remove_client(int client_id);
-int udp_stream_send_nal(const char *nal_data, int nal_size, int is_keyframe, int is_h265);
+int udp_stream_send_nal(const char *nal_data, int nal_size, int end_of_frame, int is_h265);

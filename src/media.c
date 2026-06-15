@@ -97,7 +97,7 @@ int save_video_stream(char index, hal_vidstream *stream) {
                 for (int i = 0; i < stream->count; i++) {
                     udp_stream_send_nal(stream->pack[i].data + stream->pack[i].offset,
                         stream->pack[i].length - stream->pack[i].offset,
-                        stream->pack[i].nalu[0].type == NalUnitType_CodedSliceIdr, isH265);
+                        i == stream->count - 1, isH265);
 
                     rtmp_ingest_video(&stream->pack[i], isH265);
                 }

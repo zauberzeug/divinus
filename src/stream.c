@@ -200,12 +200,12 @@ void udp_stream_remove_client(int client_id) {
  * Send a RTP-encapsulated NAL unit to all clients
  * @param nal_data NAL unit data
  * @param nal_size Size of the NAL unit
- * @param is_keyframe Indicates if the NAL unit is a keyframe
+ * @param end_of_frame Indicates if this NAL is the last one of the access unit
  * @param is_h265 Indicates if the NAL unit is using the H.265 codec
  * @return EXIT_SUCCESS or EXIT_FAILURE
  */
 int udp_stream_send_nal(const char *nal_data, int nal_size,
-    int is_keyframe, int is_h265) {
+    int end_of_frame, int is_h265) {
     if (!g_udp_ctx || !nal_data || nal_size <= 0) return EXIT_FAILURE;
 
     static unsigned char packet[MAX_UDP_PACKET_SIZE + RTP_HEADER_SIZE];
@@ -229,7 +229,7 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
             mcast_addr.sin_port = htons(g_udp_ctx->port);
 
             int packet_size = add_rtp_header(packet, nal_size, 0, 0, 0,
-                                          is_keyframe, payload_type);
+                                          end_of_frame, payload_type);
 
             memcpy(packet + RTP_HEADER_SIZE, nal_data, nal_size);
             packet_size += nal_size;
@@ -242,7 +242,7 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
 
                 int packet_size = add_rtp_header(packet, nal_size,
                     g_udp_ctx->clients[i].seq++, g_udp_ctx->clients[i].tstamp,
-                    g_udp_ctx->clients[i].ssrc, is_keyframe, payload_type);
+                    g_udp_ctx->clients[i].ssrc, end_of_frame, payload_type);
 
                 memcpy(packet + RTP_HEADER_SIZE, nal_data, nal_size);
                 packet_size += nal_size;
@@ -295,7 +295,7 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
 
                     int packet_size = add_rtp_header(packet, payload_size + 2, seq++,
                                                   tstamp, ssrc,
-                                                  is_keyframe && is_last, payload_type);
+                                                  end_of_frame && is_last, payload_type);
 
                     packet[RTP_HEADER_SIZE] = fu_indicator;
                     packet[RTP_HEADER_SIZE + 1] = fu_header;
@@ -336,12 +336,14 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
         pthread_mutex_unlock(&g_udp_ctx->mutex);
     }
 
-    pthread_mutex_lock(&g_udp_ctx->mutex);
-    for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
-        if (!g_udp_ctx->clients[i].active) continue;
-        g_udp_ctx->clients[i].tstamp += 3000;
+    if (end_of_frame) {
+        pthread_mutex_lock(&g_udp_ctx->mutex);
+        for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
+            if (!g_udp_ctx->clients[i].active) continue;
+            g_udp_ctx->clients[i].tstamp += 3000;
+        }
+        pthread_mutex_unlock(&g_udp_ctx->mutex);
     }
-    pthread_mutex_unlock(&g_udp_ctx->mutex);
 
     return EXIT_SUCCESS;
 }
