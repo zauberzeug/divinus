@@ -341,7 +341,7 @@ enum ConfigError parse_list(
 
     regex_t param_regex;
     char param_pattern[128];
-    snprintf(param_pattern, sizeof(param_pattern), "\\n\\s*%s\\s*:", param_name);
+    snprintf(param_pattern, sizeof(param_pattern), "\n[[:space:]]*%s[[:space:]]*:", param_name);
 
     if (compile_regex(&param_regex, param_pattern) < 0) {
         HAL_DANGER("config", "Error compiling param regex!\n");
@@ -360,14 +360,14 @@ enum ConfigError parse_list(
     int list_start = start_pos + param_match[0].rm_eo;
 
     regex_t line_regex;
-    if (compile_regex(&line_regex, "\\n(\\s+)([-*>]?\\s*)([^\\n]*)") < 0) {
+    if (compile_regex(&line_regex, "\n([[:space:]]+)([-*>]?[[:space:]]*)([^\n]*)") < 0) {
         HAL_DANGER("config", "Error compiling line regex!\n");
         return CONFIG_REGEX_ERROR;
     }
     
     regmatch_t base_match[2];
     regex_t base_regex;
-    if (compile_regex(&base_regex, "\\n(\\s+)") < 0) {
+    if (compile_regex(&base_regex, "\n([[:space:]]+)") < 0) {
         HAL_DANGER("config", "Error compiling base indent regex!\n");
         regfree(&line_regex);
         return CONFIG_REGEX_ERROR;
