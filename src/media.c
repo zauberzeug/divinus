@@ -97,7 +97,7 @@ int save_video_stream(char index, hal_vidstream *stream) {
                 for (int i = 0; i < stream->count; i++) {
                     udp_stream_send_nal(stream->pack[i].data + stream->pack[i].offset,
                         stream->pack[i].length - stream->pack[i].offset,
-                        stream->pack[i].nalu[0].type == NalUnitType_CodedSliceIdr, isH265);
+                        i == stream->count - 1, isH265);
 
                     rtmp_ingest_video(&stream->pack[i], isH265);
                 }
@@ -196,11 +196,11 @@ int media_start(void) {
             if (!udpOn) {
                 val = strtol(hostptr, &endptr, 10);
                 if (endptr != hostptr && val >= 224 && val <= 239) {
-                    if (udp_stream_init(app_config.stream_udp_srcport, dst))
+                    if (!udp_stream_init(app_config.stream_udp_srcport, dst))
                         udpOn = 1;
                     else return EXIT_FAILURE;
                 } else {
-                    if (udp_stream_init(app_config.stream_udp_srcport, NULL))
+                    if (!udp_stream_init(app_config.stream_udp_srcport, NULL))
                         udpOn = 1;
                     else return EXIT_FAILURE;
                 }
@@ -210,6 +210,8 @@ int media_start(void) {
                 HAL_INFO("media", "Starting streaming to %s...\n", app_config.stream_dests[i]);
         }
     }
+
+    return ret;
 }
 
 void media_stop(void) {
