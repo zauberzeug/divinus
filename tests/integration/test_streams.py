@@ -288,10 +288,13 @@ def _seen_nal_types(pkts: list[bytes], h265: bool) -> set[int]:
     return seen
 
 
-def capture_rtp(port: int, secs: float) -> list[bytes]:
+def capture_rtp(bind_ip: str, port: int, secs: float) -> list[bytes]:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("0.0.0.0", port))
+    # Bind to the exact address the camera pushes to (not 0.0.0.0): the camera
+    # sends to this host's IP, so this receives the same packets without
+    # listening on every interface.
+    sock.bind((bind_ip, port))
     sock.settimeout(1.0)
     out, deadline = [], time.monotonic() + secs
     try:
@@ -317,7 +320,7 @@ def test_stream_udp_runtime(port: int = 5600) -> None:
     try:
         api(f"/api/stream?enable=true&dest={dest}")
         live_ok = api_bool("/api/stream", "enable") and dest in api("/api/stream")
-        on = capture_rtp(port, 6.0)
+        on = capture_rtp(host_ip, port, 6.0)
         # Detect codec from the wire: H.265 if its SPS+PPS types show up.
         h265 = {33, 34}.issubset(_seen_nal_types(on, h265=True))
         sps_pps, idr, _ = _H265 if h265 else _H264
@@ -326,7 +329,7 @@ def test_stream_udp_runtime(port: int = 5600) -> None:
 
         api("/api/stream?enable=false")
         time.sleep(1.0)  # let the last in-flight frame drain; the push then goes silent
-        off = capture_rtp(port, 2.0)
+        off = capture_rtp(host_ip, port, 2.0)
         disabled_ok = api_bool("/api/stream", "enable") is False
 
         ok = live_ok and len(on) > 10 and split_ok and len(off) == 0 and disabled_ok
