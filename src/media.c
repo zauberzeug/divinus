@@ -1,6 +1,7 @@
 #include "media.h"
 
 #include "gain.h"
+#include "stream_cfg.h"
 
 char audioOn = 0, udpOn = 0;
 pthread_mutex_t aencMtx, chnMtx, mp4Mtx;
@@ -167,46 +168,23 @@ int media_start(void) {
         }
 
         if (STARTS_WITH(app_config.stream_dests[i], "udp://")) {
-            char *endptr, *hostptr, *portptr, dst[16];
-            unsigned short port = 0;
-            long val;
-
-            if (portptr = strrchr(app_config.stream_dests[i], ':')) {
-                val = strtol(portptr + 1, &endptr, 10);
-                if (endptr != portptr + 1)
-                    port = (unsigned short)val;
-                else {
-                    if (portptr[2] != '/')
-                        HAL_DANGER("media", "Invalid UDP port: %s, going with defaults!\n",
-                            app_config.stream_dests[i]);
-                }
-            }
-
-            hostptr = &app_config.stream_dests[i][6];
-            if (portptr) {
-                size_t hostlen = portptr - hostptr;
-                if (hostlen > sizeof(dst) - 1) hostlen = sizeof(dst) - 1;
-                strncpy(dst, hostptr, hostlen);
-                dst[hostlen] = '\0';
-            } else {
-                strncpy(dst, hostptr, sizeof(dst) - 1);
-                dst[sizeof(dst) - 1] = '\0';
+            char host[INET_ADDRSTRLEN];
+            unsigned short port;
+            int mcast;
+            if (stream_parse_dest(app_config.stream_dests[i], host, sizeof(host),
+                    &port, &mcast)) {
+                HAL_DANGER("media", "Invalid UDP destination: %s, skipping!\n",
+                    app_config.stream_dests[i]);
+                continue;
             }
 
             if (!udpOn) {
-                val = strtol(hostptr, &endptr, 10);
-                if (endptr != hostptr && val >= 224 && val <= 239) {
-                    if (!udp_stream_init(app_config.stream_udp_srcport, dst))
-                        udpOn = 1;
-                    else return EXIT_FAILURE;
-                } else {
-                    if (!udp_stream_init(app_config.stream_udp_srcport, NULL))
-                        udpOn = 1;
-                    else return EXIT_FAILURE;
-                }
+                if (udp_stream_init(app_config.stream_udp_srcport, mcast ? host : NULL))
+                    return EXIT_FAILURE;
+                udpOn = 1;
             }
 
-            if (udp_stream_add_client(dst, port) != -1)
+            if (udp_stream_add_client(host, port) != -1)
                 HAL_INFO("media", "Starting streaming to %s...\n", app_config.stream_dests[i]);
         }
     }
@@ -220,6 +198,34 @@ void media_stop(void) {
         udpOn = 0;
     }
     rtmp_close();
+}
+
+void media_stream_sync(void) {
+    /* Runtime enable/disable of the UDP push via /api/stream, no process restart.
+       Disabling is handled entirely by the save_video_stream() fan-out, which
+       only feeds the sender while app_config.stream_enable is set — so we must
+       NOT tear the context down here: udp_stream_send_nal() runs on the encoder
+       thread and would use-after-free a context freed from the HTTP thread. The
+       context is brought up once and lives until media_stop() at shutdown (after
+       sdk_stop() has quiesced the encoder). Enabling just (re)points it at the
+       configured destination; the source port takes effect on the next start. */
+    if (!app_config.stream_enable || !*app_config.stream_dests[0]) return;
+
+    char host[INET_ADDRSTRLEN];
+    unsigned short port;
+    int mcast;
+    if (stream_parse_dest(app_config.stream_dests[0], host, sizeof(host),
+            &port, &mcast)) {
+        HAL_DANGER("media", "Invalid UDP destination: %s\n",
+            app_config.stream_dests[0]);
+        return;
+    }
+    if (!udpOn) {
+        if (udp_stream_init(app_config.stream_udp_srcport, mcast ? host : NULL))
+            return;
+        udpOn = 1;
+    }
+    udp_stream_set_client(host, port);
 }
 
 void request_idr(void) {

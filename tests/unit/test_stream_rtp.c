@@ -137,9 +137,74 @@ static void verify_split(int rfd) {
     printf("  glued VPS+SPS+PPS+IDR pack split into 4 NALs, marker on IDR: OK\n");
 }
 
+/* Send one end-of-frame NAL and assert the registered client receives it —
+   proof the sender is armed and the client list is intact. */
+static void assert_delivers(int rfd) {
+    char nal[100];
+    memset(nal, 0x41, sizeof(nal));
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    unsigned char pkt[256];
+    assert(recvfrom(rfd, pkt, sizeof(pkt), 0, NULL, NULL) >= RTP_HDR);
+}
+
+/* Runtime enable/disable safety: close is a no-op when nothing is running, a
+   second init while running must not rebind or leak (ASan/LSan would flag the
+   orphaned context), and a full init->close->init cycle re-arms the sender — the
+   contract behind toggling app_config.stream_enable without a process restart. */
+static void test_runtime_lifecycle(int rfd, unsigned short port) {
+    udp_stream_close();   /* not running: clean no-op, not a crash */
+    udp_stream_close();
+
+    assert(udp_stream_init(0, NULL) == EXIT_SUCCESS);
+    assert(udp_stream_add_client("127.0.0.1", port) >= 0);
+    /* Re-init while running keeps the client we just registered (no rebind to a
+       fresh, empty context) and leaks nothing. */
+    assert(udp_stream_init(0, NULL) == EXIT_SUCCESS);
+    assert_delivers(rfd);
+    udp_stream_close();
+
+    /* Re-arm after a clean teardown. */
+    assert(udp_stream_init(0, NULL) == EXIT_SUCCESS);
+    assert(udp_stream_add_client("127.0.0.1", port) >= 0);
+    assert_delivers(rfd);
+    udp_stream_close();
+
+    printf("  close-idle no-op, init idempotent, init/close/init re-arms: OK\n");
+}
+
+/* Runtime re-point (the /api/stream "change destination" path): the configured
+   destination is authoritative, so set_client points the push at exactly one
+   dest and drops any previous one — proved by the old dest going silent. */
+static void test_set_client_repoints(int rfd_a, unsigned short port_a) {
+    int rfd_b;
+    unsigned short port_b = recv_sock(&rfd_b);
+    char nal[100];
+    memset(nal, 0x41, sizeof(nal));
+    unsigned char pkt[256];
+
+    assert(udp_stream_init(0, NULL) == EXIT_SUCCESS);
+
+    assert(udp_stream_set_client("127.0.0.1", port_a) == 0);
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    assert(recvfrom(rfd_a, pkt, sizeof(pkt), 0, NULL, NULL) >= RTP_HDR);
+
+    assert(udp_stream_set_client("127.0.0.1", port_b) == 0);
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    assert(recvfrom(rfd_b, pkt, sizeof(pkt), 0, NULL, NULL) >= RTP_HDR);
+    assert(recvfrom(rfd_a, pkt, sizeof(pkt), 0, NULL, NULL) < 0 &&
+           "old destination receives nothing after a re-point");
+
+    udp_stream_close();
+    close(rfd_b);
+    printf("  set_client re-points to a single dest, old dest dropped: OK\n");
+}
+
 int main(void) {
     int rfd;
     unsigned short port = recv_sock(&rfd);
+
+    test_runtime_lifecycle(rfd, port);
+    test_set_client_repoints(rfd, port);
 
     assert(udp_stream_init(0, NULL) == EXIT_SUCCESS);
     assert(udp_stream_add_client("127.0.0.1", port) >= 0);

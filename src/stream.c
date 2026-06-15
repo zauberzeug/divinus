@@ -24,79 +24,82 @@ int udp_stream_init(unsigned short port, const char *mcast_addr) {
     struct sockaddr_in addr;
     int enable = 1;
 
-    if (!(g_udp_ctx = (struct udp_stream_ctx *)calloc(1, sizeof(struct udp_stream_ctx))))
+    /* Idempotent: a second init while already running keeps the live socket,
+       manager thread and registered clients rather than orphaning them — the
+       caller can re-assert "enabled" without rebinding or leaking. */
+    if (g_udp_ctx) return EXIT_SUCCESS;
+
+    /* Build the context fully in a local and publish g_udp_ctx only once it is
+       ready, so the encoder thread (save_video_stream -> udp_stream_send_nal,
+       which reads g_udp_ctx without the lifecycle lock) never observes a
+       half-initialized context during a runtime enable. */
+    struct udp_stream_ctx *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx)
         HAL_ERROR("stream", "Failed to allocate UDP stream context!\n");
 
-    g_udp_ctx->port = port ? port : UDP_DEFAULT_PORT;
-    g_udp_ctx->running = 0;
-    g_udp_ctx->client_count = 0;
-    g_udp_ctx->is_mcast = 0;
+    ctx->port = port ? port : UDP_DEFAULT_PORT;
 
-    if (pthread_mutex_init(&g_udp_ctx->mutex, NULL)) {
-        free(g_udp_ctx);
-        g_udp_ctx = NULL;
+    if (pthread_mutex_init(&ctx->mutex, NULL)) {
+        free(ctx);
         HAL_ERROR("stream", "Failed to initialize mutex!\n");
     }
 
-    if ((g_udp_ctx->socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+    /* Own the socket in a local fd; hand it to ctx only once bound, so every
+       error path closes exactly one fd and the success path transfers it. */
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
         HAL_DANGER("stream", "Failed to create UDP socket: %s\n", strerror(errno));
         goto error;
     }
 
-    if (setsockopt(g_udp_ctx->socket_fd, SOL_SOCKET, SO_REUSEADDR,
-                  &enable, sizeof(int)) < 0) {
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
         HAL_DANGER("stream", "Failed to set socket options: %s\n", strerror(errno));
         goto error;
     }
 
     if (mcast_addr) {
-        g_udp_ctx->is_mcast = 1;
-        g_udp_ctx->mcast_addr = inet_addr(mcast_addr);
+        ctx->is_mcast = 1;
+        ctx->mcast_addr = inet_addr(mcast_addr);
 
         int ttl = 32;
-        if (setsockopt(g_udp_ctx->socket_fd, IPPROTO_IP, IP_MULTICAST_TTL,
-                      &ttl, sizeof(ttl)) < 0)
+        if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) < 0)
             HAL_DANGER("stream", "Failed to set multicast TTL: %s\n", strerror(errno));
     }
 
     memset(&addr, 0, sizeof(addr));
     addr = (struct sockaddr_in){.sin_family = AF_INET,
-        .sin_addr.s_addr = INADDR_ANY, .sin_port = htons(g_udp_ctx->port)};
+        .sin_addr.s_addr = INADDR_ANY, .sin_port = htons(ctx->port)};
 
-    if (bind(g_udp_ctx->socket_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         HAL_DANGER("stream", "Failed to bind UDP socket: %s\n", strerror(errno));
         goto error;
     }
 
-    fcntl(g_udp_ctx->socket_fd, F_SETFL,
-          fcntl(g_udp_ctx->socket_fd, F_GETFL, 0) | O_NONBLOCK);
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
 
-    g_udp_ctx->running = 1;
-    if (pthread_create(&g_udp_ctx->thread, NULL,
-                      udp_client_manager_thread, g_udp_ctx) != 0) {
+    ctx->socket_fd = fd;
+    ctx->running = 1;
+    if (pthread_create(&ctx->thread, NULL, udp_client_manager_thread, ctx) != 0) {
         HAL_DANGER("stream", "Failed to create UDP client manager thread!\n");
         goto error;
     }
 
-    HAL_INFO("stream", "UDP streaming initialized on port %d\n", g_udp_ctx->port);
-    if (g_udp_ctx->is_mcast) {
+    g_udp_ctx = ctx;
+
+    HAL_INFO("stream", "UDP streaming initialized on port %d\n", ctx->port);
+    if (ctx->is_mcast) {
         char ip_str[INET_ADDRSTRLEN];
-        struct in_addr addr;
-        addr.s_addr = g_udp_ctx->mcast_addr;
-        inet_ntop(AF_INET, &addr, ip_str, INET_ADDRSTRLEN);
+        struct in_addr maddr = {.s_addr = ctx->mcast_addr};
+        inet_ntop(AF_INET, &maddr, ip_str, INET_ADDRSTRLEN);
         HAL_INFO("stream", "UDP multicast streaming to %s\n", ip_str);
     }
 
     return EXIT_SUCCESS;
 
 error:
-    if (g_udp_ctx) {
-        if (g_udp_ctx->socket_fd >= 0) close(g_udp_ctx->socket_fd);
-        pthread_mutex_destroy(&g_udp_ctx->mutex);
-        free(g_udp_ctx);
-        g_udp_ctx = NULL;
-    }
-
+    if (fd >= 0) close(fd);
+    pthread_mutex_destroy(&ctx->mutex);
+    free(ctx);
     return EXIT_FAILURE;
 }
 
@@ -175,6 +178,44 @@ int udp_stream_add_client(const char *host, unsigned short port) {
     HAL_DANGER("stream", "Maximum number of UDP clients reached!\n");
     pthread_mutex_unlock(&g_udp_ctx->mutex);
     return -1;
+}
+
+/**
+ * Makes host:port the sole UDP push destination, replacing any current clients.
+ * Used by the runtime /api/stream path to (re)point the push at the configured
+ * destination without tearing the context down. Touches only the client table
+ * under the mutex — never frees the context — so it is safe against the encoder
+ * thread in udp_stream_send_nal().
+ * @return 0 on success, -1 on a bad address or before init
+ */
+int udp_stream_set_client(const char *host, unsigned short port) {
+    if (!g_udp_ctx) return -1;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+        HAL_DANGER("stream", "Invalid address: %s\n", host);
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_udp_ctx->mutex);
+    for (int i = 0; i < UDP_MAX_CLIENTS; i++)
+        g_udp_ctx->clients[i].active = 0;
+    g_udp_ctx->clients[0] = (udp_client_t){
+        .addr = addr,
+        .active = 1,
+        .ssrc = rand(),
+        .seq = rand() & 0xFFFF,
+        .tstamp = (millis() * 90) & UINT32_MAX,
+        .last_act = time(NULL)
+    };
+    g_udp_ctx->client_count = 1;
+    pthread_mutex_unlock(&g_udp_ctx->mutex);
+
+    HAL_INFO("stream", "UDP push destination set to %s:%d\n", host, port);
+    return 0;
 }
 
 /**

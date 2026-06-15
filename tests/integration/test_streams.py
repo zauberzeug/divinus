@@ -16,7 +16,9 @@ Verifies against a live camera that
      skips frames, it never terminates a live client) and receives only
      complete JPEGs — fewer frames per second is fine and expected,
   3. RTSP delivers decodable H26x video over TCP and UDP transport (ffmpeg),
-  4. the fMP4 HTTP stream decodes (bonus, same writev path as /video.26x).
+  4. the fMP4 HTTP stream decodes (bonus, same writev path as /video.26x),
+  5. the raw UDP push enables/disables at runtime via /api/stream with no reboot,
+     emitting decodable RTP (split SPS/PPS/IDR) to this host while enabled.
 
 Usage: uv run test_streams.py [camera-ip]
 """
@@ -254,6 +256,90 @@ def test_exposure_brightness() -> None:
         api("/api/exposure?value=0")
 
 
+def host_ip_seen_by_camera() -> str:
+    """The local address the camera reaches us on — the UDP push destination."""
+    s = socket.create_connection((CAM, 80), timeout=8)
+    ip = s.getsockname()[0]
+    s.close()
+    return ip
+
+
+# NAL type tables (mirrors utils/verify_udp_stream.py): param sets + IDR per codec.
+_H265 = {33, 34}, {19, 20}, 49  # (SPS,PPS), (IDR...), FU type
+_H264 = {7, 8}, {5}, 28
+
+
+def _seen_nal_types(pkts: list[bytes], h265: bool) -> set[int]:
+    """Classify each RTP packet's NAL type, unwrapping FU fragments to the
+    original type — so a split SPS/PPS/IDR shows up whether sent whole or
+    fragmented."""
+    _, _, fu = _H265 if h265 else _H264
+    seen = set()
+    for data in pkts:
+        if len(data) < 14:
+            continue
+        p = data[12:]  # strip RTP header
+        t = (p[0] >> 1) & 0x3F if h265 else p[0] & 0x1F
+        if t == fu:
+            fu_h = p[2] if h265 else p[1]
+            seen.add(fu_h & 0x3F if h265 else fu_h & 0x1F)
+        else:
+            seen.add(t)
+    return seen
+
+
+def capture_rtp(port: int, secs: float) -> list[bytes]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", port))
+    sock.settimeout(1.0)
+    out, deadline = [], time.monotonic() + secs
+    try:
+        while time.monotonic() < deadline:
+            try:
+                out.append(sock.recvfrom(65535)[0])
+            except socket.timeout:
+                continue
+    finally:
+        sock.close()
+    return out
+
+
+def test_stream_udp_runtime(port: int = 5600) -> None:
+    """The raw UDP push must enable/disable at runtime via /api/stream with no
+    reboot: enabling starts decodable RTP (split SPS/PPS/IDR) to our IP, disabling
+    stops it, and GET reflects the live state. Needs the host to accept inbound
+    UDP on `port`."""
+    name = "stream-udp-runtime"
+    host_ip = host_ip_seen_by_camera()
+    dest = f"udp://{host_ip}:{port}"
+    enable_was = api_bool("/api/stream", "enable")
+    try:
+        api(f"/api/stream?enable=true&dest={dest}")
+        live_ok = api_bool("/api/stream", "enable") and dest in api("/api/stream")
+        on = capture_rtp(port, 6.0)
+        # Detect codec from the wire: H.265 if its SPS+PPS types show up.
+        h265 = {33, 34}.issubset(_seen_nal_types(on, h265=True))
+        sps_pps, idr, _ = _H265 if h265 else _H264
+        seen = _seen_nal_types(on, h265)
+        split_ok = sps_pps.issubset(seen) and bool(idr & seen)
+
+        api("/api/stream?enable=false")
+        time.sleep(1.0)  # let the last in-flight frame drain; the push then goes silent
+        off = capture_rtp(port, 2.0)
+        disabled_ok = api_bool("/api/stream", "enable") is False
+
+        ok = live_ok and len(on) > 10 and split_ok and len(off) == 0 and disabled_ok
+        report(name, ok,
+                f"enabled: {len(on)} pkts, SPS/PPS/IDR split={split_ok}; "
+                f"GET live={live_ok}; disabled: {len(off)} pkts, GET off={disabled_ok}")
+    finally:
+        if enable_was:
+            api(f"/api/stream?enable=true&dest={dest}")
+        else:
+            api("/api/stream?enable=false")
+
+
 only = set(sys.argv[2:])  # optional test names to run, e.g. mjpeg-fast rtsp-tcp
 
 
@@ -288,8 +374,12 @@ if wanted("exposure-fps-react"):
     test_exposure_reacts_to_fps()
 
 if wanted("exposure-brightness"):
-    print("[7/7] Exposure brightness tracks shutter (gain pinned 1x)...")
+    print("[7/8] Exposure brightness tracks shutter (gain pinned 1x)...")
     test_exposure_brightness()
+
+if wanted("stream-udp-runtime"):
+    print("[8/8] UDP push enables/disables at runtime via /api/stream (no restart)...")
+    test_stream_udp_runtime()
 
 print()
 failed = [r for r in results if not r[1]]

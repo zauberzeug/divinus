@@ -71,6 +71,10 @@ This document describes the fields that can be found within a configuration file
 - **udp_srcport**: Source port for UDP streaming (default: `5600`).
 - **dest**: List of destination URLs for streaming (e.g., `- udp://239.255.255.0:5600 or - rtmp://myserver/path/mykey`).
 
+The UDP push (`enable` + a `udp://` `dest`) can also be toggled and re-pointed at
+runtime — no reboot — from the **UDP push stream** section of the web UI or via
+[`/api/stream`](endpoints.md). Use `/api/cmd?save` to persist the change here.
+
 ## Audio section
 
 - **enable**: Boolean to activate or deactivate audio functionality.

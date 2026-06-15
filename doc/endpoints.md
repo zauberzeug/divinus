@@ -271,6 +271,30 @@ Manages video recording operations.
 }
 ```
 
+#### `/api/stream`
+
+Controls the raw RTP/UDP push stream (the `stream:` config block) at runtime —
+no reboot. Enabling with a destination starts the push live; disabling stops it.
+A POST persists only after `/api/cmd?save`.
+
+| Method | Parameters     | Description                                                   |
+|--------|----------------|---------------------------------------------------------------|
+| GET    | `enable`       | `true`/`1` or `false`/`0` — start or stop the push live       |
+| GET    | `dest`         | Primary destination `udp://host:port` (or a `224–239` mcast)  |
+| GET    | `udp_srcport`  | Local UDP source port (`0` = default `5600`)                  |
+
+A malformed `dest` is rejected and leaves the stored destination unchanged.
+
+**Response**
+```json
+{
+  "enable": true,
+  "udp_srcport": 5600,
+  "dest": "udp://192.168.1.50:5600",
+  "dests": ["udp://192.168.1.50:5600"]
+}
+```
+
 
 ## Content Streaming
 
