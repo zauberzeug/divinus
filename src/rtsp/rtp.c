@@ -9,6 +9,7 @@
 #include "rtsp_server.h"
 #include "common.h"
 #include "rtsp.h"
+#include "../hal/captime.h"
 #include "list.h"
 #include "hash.h"
 #include "thread.h"
@@ -217,15 +218,17 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
 
         /* Carry the frame capture time (wall-clock µs) into the RTP timestamp
            at 90 kHz; 0 leaves the send-time fallback in __rtp_send_eachconn.
-           The 90 kHz value is itself 0 once per wrap (~47.7 s), which would
+           The 90 kHz value is itself 0 once per wrap (~13.25 h), which would
            collide with the "unknown" sentinel — nudge it to 1 tick so a known
-           capture time never silently reverts to send-time. */
+           capture time never silently reverts to send-time. The full µs instant
+           is kept too, for the RTCP SR to anchor its NTP/RTP-ts pair. */
         if (trans_set->capture_us) {
-            unsigned int ts90 =
-                (unsigned int)((trans_set->capture_us * 90ull / 1000ull) & UINT32_MAX);
+            unsigned int ts90 = captime_to_rtp90(trans_set->capture_us);
             con->trans[trans_set->track_id].capture_ts90 = ts90 ? ts90 : 1u;
+            con->trans[trans_set->track_id].capture_us = trans_set->capture_us;
         } else {
             con->trans[trans_set->track_id].capture_ts90 = 0;
+            con->trans[trans_set->track_id].capture_us = 0;
         }
 
         MUST(list_push(&trans_set->list_head, &trans->list_entry) == SUCCESS,

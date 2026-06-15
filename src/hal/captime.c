@@ -46,3 +46,23 @@ int captime_format(char *buf, unsigned long buf_size, unsigned long long capture
     return snprintf(buf, buf_size, "%llu.%06llu",
                     capture_us / 1000000ull, capture_us % 1000000ull);
 }
+
+/* Seconds between the NTP epoch (1900-01-01) and the Unix epoch (1970-01-01). */
+#define NTP_UNIX_EPOCH_OFFSET 2208988800ull
+
+unsigned int captime_to_rtp90(unsigned long long capture_us)
+{
+    return (unsigned int)(capture_us * 90ull / 1000ull);
+}
+
+captime_sr_ts captime_sr_from_capture(unsigned long long capture_us)
+{
+    unsigned long long sec  = capture_us / 1000000ull;
+    unsigned long long usec = capture_us % 1000000ull;
+    captime_sr_ts sr;
+
+    sr.ntp_sec  = (unsigned int)(sec + NTP_UNIX_EPOCH_OFFSET);
+    sr.ntp_frac = (unsigned int)((usec << 32) / 1000000ull);
+    sr.rtp_ts   = captime_to_rtp90(capture_us);
+    return sr;
+}
