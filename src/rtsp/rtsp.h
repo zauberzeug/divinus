@@ -131,6 +131,7 @@ struct __rtsp_obj_t {
     mime_encoded_handle sprop_sps_b64;
     mime_encoded_handle sprop_pps_b64;
     mime_encoded_handle sprop_sps_b16;
+    unsigned int sess_version; /* SDP o= version, bumped when sprops change */
     unsigned ctx; /* for rand_r */
     int con_num;
     unsigned char max_con;

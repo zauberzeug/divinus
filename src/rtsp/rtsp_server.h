@@ -35,6 +35,8 @@ int rtp_send_mp3(rtsp_handle h, unsigned char *buf, size_t len);
 
 extern void rtsp_finish(rtsp_handle h);
 
+extern void rtsp_clear_sprops(rtsp_handle h);
+
 extern rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int priority);
 
 extern void rtsp_configure_auth(rtsp_handle h, const char *user, const char *pass);

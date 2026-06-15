@@ -71,11 +71,11 @@ mime_encoded_handle mime_base64_create(char *src, size_t len)
 
     TALLOC(nh, return NULL);
    
-    ASSERT(result = calloc(len * 2 + 1, sizeof(char)), goto error);
+    ASSERT(result = calloc(4 * ((len + 2) / 3) + 1, sizeof(char)), goto error);
     nh->result = result;
     p = result;
 
-    for(i = 0; i <= len - 3; i+=3) {
+    for(i = 0; i + 3 <= len; i+=3) {
         *(p++) = __base64_charmap[(src[i] & 0xFC) >> 2];
         *(p++) = __base64_charmap[((src[i] & 0x03) << 4) | ((src[i+1] & 0xF0) >> 4)];
         *(p++) = __base64_charmap[((src[i+1] & 0x0F) << 2) | ((src[i+2] & 0xC0) >> 6)];

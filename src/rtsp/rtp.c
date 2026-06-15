@@ -294,7 +294,8 @@ static inline int __retrieve_sprop(rtsp_handle h, unsigned char *buf, size_t len
         nalptr = buf;
         single_len = 0;
         while (__split_nal(buf, &nalptr, &single_len, len) == SUCCESS) {
-            if (nalptr[0] >> 1 & 0x3F == H265_NAL_TYPE_VPS) {
+            if ((nalptr[0] >> 1 & 0x3F) == H265_NAL_TYPE_VPS) {
+                ASSERT(single_len >= 4, return FAILURE);
                 ASSERT(base64 = mime_base64_create((char *)&(nalptr[0]), single_len), return FAILURE);
 
                 DASSERT(base64->base == 64, return FAILURE);
@@ -323,11 +324,16 @@ static inline int __retrieve_sprop(rtsp_handle h, unsigned char *buf, size_t len
         while (__split_nal(buf, &nalptr, &single_len, len) == SUCCESS) {
             if ((!(h->isH265) && (nalptr[0] & 0x1F) == H264_NAL_TYPE_SPS) ||
                 (h->isH265 && (nalptr[0] >> 1 & 0x3F) == H265_NAL_TYPE_SPS)) {
+                ASSERT(single_len >= 4, return FAILURE);
                 ASSERT(base64 = mime_base64_create((char *)&(nalptr[0]), single_len), return FAILURE);
-                ASSERT(base16 = mime_base16_create((char *)&(nalptr[1]), 3), return FAILURE);
-
-                DASSERT(base16->base == 16, return FAILURE);
                 DASSERT(base64->base == 64, return FAILURE);
+
+                /* profile-level-id (base16 of SPS bytes) is an H.264/RFC 6184
+                   SDP field only; H.265 (RFC 7798) has no such parameter. */
+                if (!h->isH265) {
+                    ASSERT(base16 = mime_base16_create((char *)&(nalptr[1]), 3), return FAILURE);
+                    DASSERT(base16->base == 16, return FAILURE);
+                }
 
                 /* optimistic lock */
                 rtsp_lock(h);
@@ -337,12 +343,14 @@ static inline int __retrieve_sprop(rtsp_handle h, unsigned char *buf, size_t len
                 } else {
                     h->sprop_sps_b64 = base64;
                 }
-                
-                if (h->sprop_sps_b16) {
-                    DBG("sps is set by another thread?\n");
-                    mime_encoded_delete(base16);
-                } else {
-                    h->sprop_sps_b16 = base16;
+
+                if (base16) {
+                    if (h->sprop_sps_b16) {
+                        DBG("sps is set by another thread?\n");
+                        mime_encoded_delete(base16);
+                    } else {
+                        h->sprop_sps_b16 = base16;
+                    }
                 }
                 rtsp_unlock(h);
             }
