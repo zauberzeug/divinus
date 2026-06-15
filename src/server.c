@@ -1,6 +1,7 @@
 #include "server.h"
 #include "sock_send.h"
 #include "stream_cfg.h"
+#include "hal/captime.h"
 
 #include "http_headers.h"
 
@@ -420,12 +421,23 @@ void send_pcm_to_client(hal_audframe *frame) {
     pthread_mutex_unlock(&client_fds_mutex);
 }
 
-void send_mjpeg_to_client(char index, char *buf, ssize_t size) {
-    static char prefix_buf[128];
-    ssize_t prefix_size = sprintf(prefix_buf,
+void send_mjpeg_to_client(char index, char *buf, ssize_t size,
+    unsigned long long capture_us) {
+    static char prefix_buf[160];
+    /* Per-part absolute capture time as "<sec>.<usec>"; omitted (not faked)
+       when the rebase is unavailable so a client can tell it apart. */
+    char ts_hdr[48];
+    ts_hdr[0] = '\0';
+    if (capture_us) {
+        char ts[32];
+        captime_format(ts, sizeof(ts), capture_us);
+        snprintf(ts_hdr, sizeof(ts_hdr), "X-Timestamp: %s\r\n", ts);
+    }
+    ssize_t prefix_size = snprintf(prefix_buf, sizeof(prefix_buf),
         "--boundarydonotcross\r\n"
         "Content-Type:image/jpeg\r\n"
-        "Content-Length: %lu\r\n\r\n", size);
+        "Content-Length: %lu\r\n"
+        "%s\r\n", size, ts_hdr);
     buf[size++] = '\r';
     buf[size++] = '\n';
 

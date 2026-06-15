@@ -81,6 +81,9 @@ typedef struct {
     int rtcp_tick_org;
     unsigned short rtp_seq;
     unsigned int rtp_timestamp;
+    /* 90 kHz RTP timestamp for the current access unit, derived from the frame
+       capture time (captime); 0 means none, fall back to send-time millis(). */
+    unsigned int capture_ts90;
     char is_tcp;
     unsigned char channel_rtp;
     unsigned char channel_rtcp;
