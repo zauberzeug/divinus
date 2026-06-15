@@ -27,6 +27,7 @@ int sdk_stop(void);
 
 int media_start(void);
 void media_stop(void);
+void media_stream_sync(void);
 
 void request_idr(void);
 int get_ae_state(hal_aestate *state);

@@ -316,6 +316,7 @@
 			apiApply('jpeg');
 			apiApply('audio');
 			apiApply('record');
+			apiApply('stream');
 			setTimeout(function() {
 				saveConfig();
 				setTimeout(function() { restartApp(); }, 500);
@@ -423,6 +424,7 @@
 			apiRead('night');
 			apiRead('record');
 			toggleRecord(document.getElementById('record_state'));
+			apiRead('stream');
 			apiRead('time');
 
 			duplicateRows('osd', 10);
@@ -589,6 +591,34 @@
 						</table>
 						<button id="record_state" class="btn" onclick="toggleRecord(this)"></button>
 						<a href="javascript:apiApply('record')" class="btn right">Apply</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row">
+				<div class="6 col box">
+					<fieldset>
+						<legend>UDP push stream</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="stream_enable">Enabled</label></td>
+								<td><select id="stream_enable">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="stream_dest" title="Where to push the raw RTP/UDP H.26x stream, e.g. udp://192.168.1.50:5600, or an IPv4 multicast group such as udp://239.0.0.1:5600.">Destination</label></td>
+								<td><input type="text" id="stream_dest" placeholder="udp://host:port"></td>
+							</tr>
+							<tr>
+								<td><label for="stream_udp_srcport" title="Local UDP source port the camera sends from. 0 = default (5600).">Source port</label></td>
+								<td><input type="number" id="stream_udp_srcport" min="0" max="65535" placeholder="0 = default"></td>
+							</tr>
+							<tr>
+								<td colspan="2"><small>Pushes RTP/UDP H.26x to the destination with no reboot &mdash; set Enabled ON, fill the destination and hit Apply. Save to keep it across restarts.</small></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('stream')" class="btn right">Apply</a>
 					</fieldset>
 				</div>
 			</div>

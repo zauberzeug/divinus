@@ -1,5 +1,6 @@
 #include "server.h"
 #include "sock_send.h"
+#include "stream_cfg.h"
 
 #include "http_headers.h"
 
@@ -1500,6 +1501,23 @@ void respond_request(http_request_t *req) {
                 recordOn ? "true" : "false", start_time, app_config.record_continuous ? "true" : "false",
                 app_config.record_path, app_config.record_filename,
                 app_config.record_segment_duration, app_config.record_segment_size);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/stream")) {
+        if (req->query) {
+            stream_apply_query(req->query, &app_config, NULL);
+            /* Bring the UDP push up or down to match the new config, live. */
+            media_stream_sync();
+        }
+        int hlen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n");
+        respLen = hlen + stream_api_format(response + hlen,
+            sizeof(response) - hlen, &app_config);
         send_and_close(req->clntFd, response, respLen);
         return;
     }

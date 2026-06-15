@@ -1,5 +1,7 @@
 #include "app_config.h"
 
+#include "stream_cfg.h"
+
 const char *appconf_paths[] = {"./divinus.yaml", "/etc/divinus.yaml"};
 
 struct AppConfig app_config;
@@ -144,15 +146,7 @@ int app_config_save(void) {
     fprintf(file, "  segment_duration: %d\n", app_config.record_segment_duration);
     fprintf(file, "  segment_size: %d\n", app_config.record_segment_size);
 
-    fprintf(file, "stream:\n");
-    fprintf(file, "  enable: %s\n", app_config.stream_enable ? "true" : "false");
-    fprintf(file, "  udp_srcport: %d\n", app_config.stream_udp_srcport);
-    if (!EMPTY(*app_config.stream_dests)) {
-        fprintf(file, "  dest: ");
-        for (int i = 0; app_config.stream_dests[i] && *app_config.stream_dests[i]; i++) {
-            fprintf(file, "    - %s\n", app_config.stream_dests[i]);
-        }
-    }
+    stream_config_write(file, &app_config);
 
     fprintf(file, "audio:\n");
     fprintf(file, "  enable: %s\n", app_config.audio_enable ? "true" : "false");
@@ -489,16 +483,7 @@ enum ConfigError app_config_parse(void) {
             goto RET_ERR;
     }
 
-    parse_bool(&ini, "stream", "enable", &app_config.stream_enable);
-    if (app_config.stream_enable) {
-        int count, val;
-        err = parse_int(&ini, "stream", "udp_srcport", 0, USHRT_MAX, &val);
-        if (err == CONFIG_OK) app_config.stream_udp_srcport = (unsigned short)val;
-        parse_list(&ini, "stream", "dest",
-            sizeof(app_config.stream_dests) / sizeof(*app_config.stream_dests),
-            &count, app_config.stream_dests);
-        *app_config.stream_dests[count] = '\0';
-    }
+    stream_config_parse(&ini, &app_config);
 
     parse_bool(&ini, "audio", "enable", &app_config.audio_enable);
     if (app_config.audio_enable) {
