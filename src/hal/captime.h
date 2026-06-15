@@ -50,3 +50,23 @@ bool captime_now(unsigned long long pts_us, unsigned long long *out_capture_us);
    form shared by the stream timestamps (e.g. MJPEG X-Timestamp). Writes into
    buf (snprintf semantics) and returns the character count. */
 int captime_format(char *buf, unsigned long buf_size, unsigned long long capture_us);
+
+/* Map a capture instant (epoch µs) to its 90 kHz RTP timestamp, truncated to
+   32 bits. The single mapping shared by the per-frame RTP stamp (rtp.c) and the
+   RTCP Sender Report, so a frame's RTP timestamp and the SR that anchors it
+   agree by construction. Wraps every 2^32 / 90000 ≈ 13.25 h; the receiver
+   tracks wraps through the SR cadence. */
+unsigned int captime_to_rtp90(unsigned long long capture_us);
+
+/* The sender-info timestamps of an RTCP Sender Report (RFC 3550 §6.4.1), all
+   derived from one capture instant so the NTP wall-clock and the RTP timeline
+   it anchors describe the SAME instant. Host byte order; the caller applies
+   htonl when writing the packet. */
+typedef struct {
+    unsigned int ntp_sec;   /* seconds since 1900-01-01 (the NTP epoch) */
+    unsigned int ntp_frac;  /* binary fraction of a second, 2^-32 units */
+    unsigned int rtp_ts;    /* 90 kHz RTP timestamp of that same instant */
+} captime_sr_ts;
+
+/* Map a capture instant (epoch µs) to the SR sender-info timestamps above. */
+captime_sr_ts captime_sr_from_capture(unsigned long long capture_us);

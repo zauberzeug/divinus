@@ -84,6 +84,10 @@ typedef struct {
     /* 90 kHz RTP timestamp for the current access unit, derived from the frame
        capture time (captime); 0 means none, fall back to send-time millis(). */
     unsigned int capture_ts90;
+    /* Capture instant (epoch µs) of the most recent access unit, 0 = unknown.
+       The RTCP Sender Report anchors its NTP wall-clock and RTP-ts to this one
+       instant so the pair a receiver reads describes the same time. */
+    unsigned long long capture_us;
     char is_tcp;
     unsigned char channel_rtp;
     unsigned char channel_rtcp;
