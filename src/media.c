@@ -2,6 +2,7 @@
 
 #include "gain.h"
 #include "stream_cfg.h"
+#include "hal/captime.h"
 
 char audioOn = 0, udpOn = 0;
 pthread_mutex_t aencMtx, chnMtx, mp4Mtx;
@@ -85,6 +86,13 @@ int save_audio_stream(hal_audframe *frame) {
 int save_video_stream(char index, hal_vidstream *stream) {
     int ret;
 
+    /* One capture-time rebase per frame, shared by every stream below: the
+       vendor PTS -> absolute epoch-µs instant. 0 if unavailable (each sender
+       then keeps its send-time fallback rather than emit a wrong stamp). */
+    unsigned long long capture_us = 0;
+    if (stream->count > 0)
+        captime_now(stream->pack[0].timestamp, &capture_us);
+
     switch (chnState[index].payload) {
         case HAL_VIDCODEC_H264:
         case HAL_VIDCODEC_H265:
@@ -92,7 +100,7 @@ int save_video_stream(char index, hal_vidstream *stream) {
             char isH265 = chnState[index].payload == HAL_VIDCODEC_H265 ? 1 : 0;
 
             if (app_config.rtsp_enable && rtspHandle)
-                rtp_send_h26x(rtspHandle, stream, isH265);
+                rtp_send_h26x(rtspHandle, stream, isH265, capture_us);
 
             if (app_config.stream_enable) {
                 for (int i = 0; i < stream->count; i++) {
@@ -128,7 +136,7 @@ int save_video_stream(char index, hal_vidstream *stream) {
                         data->length - data->offset);
                     buf_size += data->length - data->offset;
                 }
-                send_mjpeg_to_client(index, mjpeg_buf, buf_size);
+                send_mjpeg_to_client(index, mjpeg_buf, buf_size, capture_us);
             }
             break;
         case HAL_VIDCODEC_JPG:

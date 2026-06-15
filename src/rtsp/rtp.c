@@ -34,6 +34,7 @@ struct __transfer_set_t {
     struct list_head_t list_head;
     rtsp_handle h;
     int track_id;
+    unsigned long long capture_us;  /* frame capture wall-clock µs, 0 = unknown */
 };
 
 /******************************************************************************
@@ -106,7 +107,12 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
     if (con->stalled || con->con_state != __CON_S_PLAYING) return SUCCESS;
 
     if (con->trans[track_id].au_pending) {
-        unsigned int ts = (millis() * 90) & UINT32_MAX;
+        /* Prefer the frame capture time (90 kHz, set per-frame in
+           __rtp_setup_transfer); fall back to send-time only when capture
+           time is unknown. The monotonic bump keeps the timeline strictly
+           increasing across frames either way. */
+        unsigned int ts = con->trans[track_id].capture_ts90;
+        if (!ts) ts = (millis() * 90) & UINT32_MAX;
         if ((int)(ts - con->trans[track_id].rtp_timestamp) <= 0)
             ts = con->trans[track_id].rtp_timestamp + 1;
         con->trans[track_id].rtp_timestamp = ts;
@@ -208,6 +214,19 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
             return FAILURE);
 
         trans->con = con;
+
+        /* Carry the frame capture time (wall-clock µs) into the RTP timestamp
+           at 90 kHz; 0 leaves the send-time fallback in __rtp_send_eachconn.
+           The 90 kHz value is itself 0 once per wrap (~47.7 s), which would
+           collide with the "unknown" sentinel — nudge it to 1 tick so a known
+           capture time never silently reverts to send-time. */
+        if (trans_set->capture_us) {
+            unsigned int ts90 =
+                (unsigned int)((trans_set->capture_us * 90ull / 1000ull) & UINT32_MAX);
+            con->trans[trans_set->track_id].capture_ts90 = ts90 ? ts90 : 1u;
+        } else {
+            con->trans[trans_set->track_id].capture_ts90 = 0;
+        }
 
         MUST(list_push(&trans_set->list_head, &trans->list_entry) == SUCCESS,
             goto error);
@@ -368,11 +387,12 @@ void rtp_disable_audio(rtsp_handle h)
     h->audioPt = 255;
 }
 
-int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265)
+int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265,
+    unsigned long long capture_us)
 {
     int ret = FAILURE;
     int track_id = 0;
-    struct __transfer_set_t trans = {};
+    struct __transfer_set_t trans = { .capture_us = capture_us };
 
     /* checkout RTP packet */
     DASSERT(h, return FAILURE);
