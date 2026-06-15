@@ -152,7 +152,7 @@ int udp_stream_add_client(const char *host, unsigned short port) {
             .active = 1,
             .ssrc = rand(),
             .seq = rand() & 0xFFFF,
-            .tstamp = rand(),
+            .tstamp = (millis() * 90) & UINT32_MAX,
             .last_act = time(NULL)
         };
 
@@ -208,6 +208,15 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
     int end_of_frame, int is_h265) {
     if (!g_udp_ctx || !nal_data || nal_size <= 0) return EXIT_FAILURE;
 
+    // Strip the Annex-B start code: the encoder hands us 00 00 01 / 00 00 00 01
+    // prefixed NALs, but RTP payloads carry the bare NAL unit (RFC 6184/7798).
+    if (nal_size >= 4 && !nal_data[0] && !nal_data[1] && !nal_data[2] && nal_data[3] == 1) {
+        nal_data += 4; nal_size -= 4;
+    } else if (nal_size >= 3 && !nal_data[0] && !nal_data[1] && nal_data[2] == 1) {
+        nal_data += 3; nal_size -= 3;
+    }
+    if (nal_size <= 0) return EXIT_FAILURE;
+
     static unsigned char packet[MAX_UDP_PACKET_SIZE + RTP_HEADER_SIZE];
     int payload_type = 96;
     int total_clients = 0;
@@ -256,24 +265,21 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
         pthread_mutex_unlock(&g_udp_ctx->mutex);
     } else {
         int nal_header_size = is_h265 ? 2 : 1;
-        unsigned char nal_type;
+        // FU header: H.265 (RFC 7798) is a 2-byte payload header + 1-byte FU
+        // header; H.264 (RFC 6184) FU-A is a 1-byte indicator + 1-byte FU header.
+        int fu_header_size = is_h265 ? 3 : 2;
+        int chunk = MAX_UDP_PACKET_SIZE - fu_header_size;
+        unsigned char nal_type = is_h265 ? ((nal_data[0] >> 1) & 0x3F)
+                                         : (nal_data[0] & 0x1F);
 
-        if (is_h265) {
-            nal_type = nal_data[0] & 0x3F;
-        } else {
-            nal_type = nal_data[0] & 0x1F;
-        }
-
-        int fragments = (nal_size - nal_header_size + MAX_UDP_PACKET_SIZE - 1) /
-                        (MAX_UDP_PACKET_SIZE - 2);
         int bytes_left = nal_size - nal_header_size;
+        int fragments = (bytes_left + chunk - 1) / chunk;
         const char *data_ptr = nal_data + nal_header_size;
 
         pthread_mutex_lock(&g_udp_ctx->mutex);
 
         for (int i = 0; i < UDP_MAX_CLIENTS || g_udp_ctx->is_mcast; i++) {
             if (g_udp_ctx->is_mcast || g_udp_ctx->clients[i].active) {
-                unsigned char fu_indicator, fu_header;
                 int is_first = 1;
                 int remaining = bytes_left;
                 const char *frag_ptr = data_ptr;
@@ -283,25 +289,26 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
 
                 for (int frag = 0; frag < fragments; frag++) {
                     int is_last = (frag == fragments - 1);
-                    int payload_size = (is_last) ? remaining : (MAX_UDP_PACKET_SIZE - 2);
+                    int payload_size = is_last ? remaining : chunk;
 
-                    if (is_h265) {
-                        fu_indicator = (nal_data[0] & 0x81) | (49 << 1); // FU type=49
-                        fu_header = (is_first ? 0x80 : 0) | (is_last ? 0x40 : 0) | nal_type;
-                    } else {
-                        fu_indicator = (nal_data[0] & 0xE0) | 28; // FU-A type=28
-                        fu_header = (is_first ? 0x80 : 0) | (is_last ? 0x40 : 0) | nal_type;
-                    }
-
-                    int packet_size = add_rtp_header(packet, payload_size + 2, seq++,
-                                                  tstamp, ssrc,
+                    int packet_size = add_rtp_header(packet, payload_size + fu_header_size,
+                                                  seq++, tstamp, ssrc,
                                                   end_of_frame && is_last, payload_type);
 
-                    packet[RTP_HEADER_SIZE] = fu_indicator;
-                    packet[RTP_HEADER_SIZE + 1] = fu_header;
+                    if (is_h265) {
+                        // Payload header: original 2-byte NAL header, type rewritten to 49 (FU)
+                        packet[RTP_HEADER_SIZE]     = (nal_data[0] & 0x81) | (49 << 1);
+                        packet[RTP_HEADER_SIZE + 1] = nal_data[1];
+                        packet[RTP_HEADER_SIZE + 2] = (is_first ? 0x80 : 0) |
+                                                      (is_last ? 0x40 : 0) | nal_type;
+                    } else {
+                        packet[RTP_HEADER_SIZE]     = (nal_data[0] & 0xE0) | 28; // FU-A type=28
+                        packet[RTP_HEADER_SIZE + 1] = (is_first ? 0x80 : 0) |
+                                                      (is_last ? 0x40 : 0) | nal_type;
+                    }
 
-                    memcpy(packet + RTP_HEADER_SIZE + 2, frag_ptr, payload_size);
-                    packet_size += payload_size + 2;
+                    memcpy(packet + RTP_HEADER_SIZE + fu_header_size, frag_ptr, payload_size);
+                    packet_size += payload_size + fu_header_size;
 
                     frag_ptr += payload_size;
                     remaining -= payload_size;
@@ -337,10 +344,18 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
     }
 
     if (end_of_frame) {
+        /* Advance each client's RTP timestamp to the wall clock (90 kHz) so the
+           per-frame delta tracks real elapsed time regardless of the configured
+           frame rate; mirrors the RTSP sender (rtp.c). The monotonic guard keeps
+           the 32-bit stamp strictly increasing when frames land in the same tick. */
+        unsigned int now90 = (millis() * 90) & UINT32_MAX;
         pthread_mutex_lock(&g_udp_ctx->mutex);
         for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
             if (!g_udp_ctx->clients[i].active) continue;
-            g_udp_ctx->clients[i].tstamp += 3000;
+            unsigned int ts = now90;
+            if ((int)(ts - g_udp_ctx->clients[i].tstamp) <= 0)
+                ts = g_udp_ctx->clients[i].tstamp + 1;
+            g_udp_ctx->clients[i].tstamp = ts;
         }
         pthread_mutex_unlock(&g_udp_ctx->mutex);
     }
@@ -405,7 +420,7 @@ static void *udp_client_manager_thread(void *data) {
                     ctx->clients[i].active = 1;
                     ctx->clients[i].ssrc = rand();
                     ctx->clients[i].seq = rand() & 0xFFFF;
-                    ctx->clients[i].tstamp = rand();
+                    ctx->clients[i].tstamp = (millis() * 90) & UINT32_MAX;
                     ctx->clients[i].last_act = now;
 
                     ctx->client_count++;
