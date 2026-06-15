@@ -14,10 +14,13 @@
 
 #include "hal/support.h"
 #include "hal/tools.h"
+#include "fmt/rtppkt.h"
 
 #define MAX_UDP_PACKET_SIZE 1400
 #define UDP_DEFAULT_PORT 5600
 #define RTP_HEADER_SIZE 12
+/* Largest RTP payload that keeps the whole datagram within MAX_UDP_PACKET_SIZE. */
+#define UDP_MAX_PAYLOAD (MAX_UDP_PACKET_SIZE - RTP_HEADER_SIZE)
 #define UDP_MAX_CLIENTS 8
 
 typedef struct {

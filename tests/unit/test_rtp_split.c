@@ -36,6 +36,16 @@ int main(void) {
     assert(__split_nal(two, &nalp, &plen, sizeof(two)) == SUCCESS);
     assert(nalp == two + 10 && plen == 3);           /* trailing NAL: 3 bytes */
 
+    /* A short trailing NAL whose start code sits in the last bytes of the pack
+       must still split out, not get folded into the previous NAL (the loop
+       bound has to reach a start code flush against the buffer end). */
+    unsigned char tail[] = {0,0,0,1, 0x44,0x44, 0,0,0,1, 0x55};
+    nalp = tail; plen = 0;
+    assert(__split_nal(tail, &nalp, &plen, sizeof(tail)) == SUCCESS);
+    assert(nalp == tail + 4 && plen == 2);           /* first NAL stays 2 bytes */
+    assert(__split_nal(tail, &nalp, &plen, sizeof(tail)) == SUCCESS);
+    assert(nalp == tail + 10 && plen == 1);          /* 1-byte trailing NAL split out */
+
     puts("test_rtp_split: OK");
     return 0;
 }

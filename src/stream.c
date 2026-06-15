@@ -7,6 +7,13 @@ static int add_rtp_header(unsigned char *packet, int pay_size,
     unsigned short seq, unsigned int tstamp,
     unsigned int ssrc, int marker, int pay_type);
 
+struct udp_emit_ctx {
+    int payload_type;
+    int throttle_us;   /* spacing between FU fragments; 0 disables */
+};
+static int udp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
+    const unsigned char *body, int body_len, int marker);
+
 /**
  * Initializes the UDP streaming module
  * @param port UDP port to be used (0 = prefer the default value)
@@ -197,151 +204,93 @@ void udp_stream_remove_client(int client_id) {
 }
 
 /**
- * Send a RTP-encapsulated NAL unit to all clients
- * @param nal_data NAL unit data
- * @param nal_size Size of the NAL unit
- * @param end_of_frame Indicates if this NAL is the last one of the access unit
- * @param is_h265 Indicates if the NAL unit is using the H.265 codec
+ * Emit one RTP packet (FU/payload headers + body) to every active client, or to
+ * the multicast group. Stamps each client's own sequence/timestamp/SSRC; the
+ * shared packetizer supplies the marker. Runs under g_udp_ctx->mutex.
+ */
+static int udp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
+    const unsigned char *body, int body_len, int marker) {
+    struct udp_emit_ctx *e = vctx;
+    static unsigned char packet[MAX_UDP_PACKET_SIZE + RTP_HEADER_SIZE];
+    int payload_len = hdr_len + body_len;
+
+    if (RTP_HEADER_SIZE + payload_len > (int)sizeof(packet)) return EXIT_FAILURE;
+    if (hdr_len) memcpy(packet + RTP_HEADER_SIZE, hdr, hdr_len);
+    memcpy(packet + RTP_HEADER_SIZE + hdr_len, body, body_len);
+    int packet_size = RTP_HEADER_SIZE + payload_len;
+
+    if (g_udp_ctx->is_mcast) {
+        struct sockaddr_in mcast_addr;
+        memset(&mcast_addr, 0, sizeof(mcast_addr));
+        mcast_addr.sin_family = AF_INET;
+        mcast_addr.sin_addr.s_addr = g_udp_ctx->mcast_addr;
+        mcast_addr.sin_port = htons(g_udp_ctx->port);
+
+        add_rtp_header(packet, payload_len, 0, 0, 0, marker, e->payload_type);
+        sendto(g_udp_ctx->socket_fd, packet, packet_size, 0,
+            (struct sockaddr *)&mcast_addr, sizeof(mcast_addr));
+    } else {
+        for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
+            if (!g_udp_ctx->clients[i].active) continue;
+
+            add_rtp_header(packet, payload_len, g_udp_ctx->clients[i].seq++,
+                g_udp_ctx->clients[i].tstamp, g_udp_ctx->clients[i].ssrc,
+                marker, e->payload_type);
+            sendto(g_udp_ctx->socket_fd, packet, packet_size, 0,
+                (struct sockaddr *)&g_udp_ctx->clients[i].addr,
+                sizeof(struct sockaddr_in));
+        }
+    }
+
+    /* Space out fragments (hdr_len > 0) so a burst of FU packets doesn't
+       overrun the socket buffer. Tracked for removal under the latency epic. */
+    if (hdr_len && e->throttle_us) usleep(e->throttle_us);
+    return EXIT_SUCCESS;
+}
+
+/**
+ * Send a RTP-encapsulated access-unit pack to all clients
+ * @param nal_data Annex-B pack (one or more start-code-prefixed NALs)
+ * @param nal_size Size of the pack
+ * @param end_of_frame Indicates if this pack ends the access unit
+ * @param is_h265 Indicates if the NAL units are H.265
  * @return EXIT_SUCCESS or EXIT_FAILURE
  */
 int udp_stream_send_nal(const char *nal_data, int nal_size,
     int end_of_frame, int is_h265) {
     if (!g_udp_ctx || !nal_data || nal_size <= 0) return EXIT_FAILURE;
 
-    // Strip the Annex-B start code: the encoder hands us 00 00 01 / 00 00 00 01
-    // prefixed NALs, but RTP payloads carry the bare NAL unit (RFC 6184/7798).
-    if (nal_size >= 4 && !nal_data[0] && !nal_data[1] && !nal_data[2] && nal_data[3] == 1) {
-        nal_data += 4; nal_size -= 4;
-    } else if (nal_size >= 3 && !nal_data[0] && !nal_data[1] && nal_data[2] == 1) {
-        nal_data += 3; nal_size -= 3;
-    }
-    if (nal_size <= 0) return EXIT_FAILURE;
-
-    static unsigned char packet[MAX_UDP_PACKET_SIZE + RTP_HEADER_SIZE];
-    int payload_type = 96;
-    int total_clients = 0;
-
+    int total_clients;
     pthread_mutex_lock(&g_udp_ctx->mutex);
     total_clients = g_udp_ctx->client_count;
     pthread_mutex_unlock(&g_udp_ctx->mutex);
 
     if (total_clients == 0 && !g_udp_ctx->is_mcast) return EXIT_SUCCESS;
 
-    if (nal_size + RTP_HEADER_SIZE <= MAX_UDP_PACKET_SIZE) {
-        pthread_mutex_lock(&g_udp_ctx->mutex);
+    struct udp_emit_ctx emit_ctx = {.payload_type = 96, .throttle_us = 100};
+    unsigned char *buf = (unsigned char *)nal_data;
 
-        if (g_udp_ctx->is_mcast) {
-            struct sockaddr_in mcast_addr;
-            memset(&mcast_addr, 0, sizeof(mcast_addr));
-            mcast_addr.sin_family = AF_INET;
-            mcast_addr.sin_addr.s_addr = g_udp_ctx->mcast_addr;
-            mcast_addr.sin_port = htons(g_udp_ctx->port);
-
-            int packet_size = add_rtp_header(packet, nal_size, 0, 0, 0,
-                                          end_of_frame, payload_type);
-
-            memcpy(packet + RTP_HEADER_SIZE, nal_data, nal_size);
-            packet_size += nal_size;
-
-            sendto(g_udp_ctx->socket_fd, packet, packet_size, 0,
-                 (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
-        } else {
-            for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
-                if (!g_udp_ctx->clients[i].active) continue;
-
-                int packet_size = add_rtp_header(packet, nal_size,
-                    g_udp_ctx->clients[i].seq++, g_udp_ctx->clients[i].tstamp,
-                    g_udp_ctx->clients[i].ssrc, end_of_frame, payload_type);
-
-                memcpy(packet + RTP_HEADER_SIZE, nal_data, nal_size);
-                packet_size += nal_size;
-
-                sendto(g_udp_ctx->socket_fd, packet, packet_size, 0,
-                    (struct sockaddr*)&g_udp_ctx->clients[i].addr,
-                    sizeof(struct sockaddr_in));
-            }
+    pthread_mutex_lock(&g_udp_ctx->mutex);
+    if (nal_size >= 4 && !buf[0] && !buf[1] && !buf[2] && buf[3] == 1) {
+        /* The encoder hands a keyframe access unit as one glued pack
+           (VPS+SPS+PPS+IDR). Split it into individual NALs and packetize each
+           on its own; the marker rides only the last NAL of the frame. */
+        unsigned char *it = buf, *cur;
+        size_t it_len = 0, cur_len;
+        int have = nal_next(buf, &it, &it_len, nal_size) == 0;
+        while (have) {
+            cur = it;
+            cur_len = it_len;
+            int more = nal_next(buf, &it, &it_len, nal_size) == 0;
+            rtp_packetize_nal(cur, (int)cur_len, is_h265, UDP_MAX_PAYLOAD,
+                end_of_frame && !more, udp_emit, &emit_ctx);
+            have = more;
         }
-
-        pthread_mutex_unlock(&g_udp_ctx->mutex);
     } else {
-        int nal_header_size = is_h265 ? 2 : 1;
-        // FU header: H.265 (RFC 7798) is a 2-byte payload header + 1-byte FU
-        // header; H.264 (RFC 6184) FU-A is a 1-byte indicator + 1-byte FU header.
-        int fu_header_size = is_h265 ? 3 : 2;
-        int chunk = MAX_UDP_PACKET_SIZE - fu_header_size;
-        unsigned char nal_type = is_h265 ? ((nal_data[0] >> 1) & 0x3F)
-                                         : (nal_data[0] & 0x1F);
-
-        int bytes_left = nal_size - nal_header_size;
-        int fragments = (bytes_left + chunk - 1) / chunk;
-        const char *data_ptr = nal_data + nal_header_size;
-
-        pthread_mutex_lock(&g_udp_ctx->mutex);
-
-        for (int i = 0; i < UDP_MAX_CLIENTS || g_udp_ctx->is_mcast; i++) {
-            if (g_udp_ctx->is_mcast || g_udp_ctx->clients[i].active) {
-                int is_first = 1;
-                int remaining = bytes_left;
-                const char *frag_ptr = data_ptr;
-                unsigned short seq = g_udp_ctx->is_mcast ? 0 : g_udp_ctx->clients[i].seq;
-                unsigned int ssrc = g_udp_ctx->is_mcast ? 0 : g_udp_ctx->clients[i].ssrc;
-                unsigned int tstamp = g_udp_ctx->is_mcast ? 0 : g_udp_ctx->clients[i].tstamp;
-
-                for (int frag = 0; frag < fragments; frag++) {
-                    int is_last = (frag == fragments - 1);
-                    int payload_size = is_last ? remaining : chunk;
-
-                    int packet_size = add_rtp_header(packet, payload_size + fu_header_size,
-                                                  seq++, tstamp, ssrc,
-                                                  end_of_frame && is_last, payload_type);
-
-                    if (is_h265) {
-                        // Payload header: original 2-byte NAL header, type rewritten to 49 (FU)
-                        packet[RTP_HEADER_SIZE]     = (nal_data[0] & 0x81) | (49 << 1);
-                        packet[RTP_HEADER_SIZE + 1] = nal_data[1];
-                        packet[RTP_HEADER_SIZE + 2] = (is_first ? 0x80 : 0) |
-                                                      (is_last ? 0x40 : 0) | nal_type;
-                    } else {
-                        packet[RTP_HEADER_SIZE]     = (nal_data[0] & 0xE0) | 28; // FU-A type=28
-                        packet[RTP_HEADER_SIZE + 1] = (is_first ? 0x80 : 0) |
-                                                      (is_last ? 0x40 : 0) | nal_type;
-                    }
-
-                    memcpy(packet + RTP_HEADER_SIZE + fu_header_size, frag_ptr, payload_size);
-                    packet_size += payload_size + fu_header_size;
-
-                    frag_ptr += payload_size;
-                    remaining -= payload_size;
-                    is_first = 0;
-
-                    if (g_udp_ctx->is_mcast) {
-                        struct sockaddr_in mcast_addr;
-                        memset(&mcast_addr, 0, sizeof(mcast_addr));
-                        mcast_addr.sin_family = AF_INET;
-                        mcast_addr.sin_addr.s_addr = g_udp_ctx->mcast_addr;
-                        mcast_addr.sin_port = htons(g_udp_ctx->port);
-
-                        sendto(g_udp_ctx->socket_fd, packet, packet_size, 0,
-                             (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
-                    } else {
-                        sendto(g_udp_ctx->socket_fd, packet, packet_size, 0,
-                             (struct sockaddr*)&g_udp_ctx->clients[i].addr,
-                             sizeof(struct sockaddr_in));
-                    }
-
-                    usleep(100);
-                }
-
-                if (!g_udp_ctx->is_mcast) {
-                    g_udp_ctx->clients[i].seq = seq;
-                }
-            }
-
-            if (g_udp_ctx->is_mcast) break;
-        }
-
-        pthread_mutex_unlock(&g_udp_ctx->mutex);
+        rtp_packetize_nal(buf, nal_size, is_h265, UDP_MAX_PAYLOAD,
+            end_of_frame, udp_emit, &emit_ctx);
     }
+    pthread_mutex_unlock(&g_udp_ctx->mutex);
 
     if (end_of_frame) {
         /* Advance each client's RTP timestamp to the wall clock (90 kHz) so the
