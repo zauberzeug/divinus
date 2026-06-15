@@ -25,7 +25,8 @@
 static inline int __rtp_send(struct nal_rtp_t *rtp, struct list_head_t *trans_list);
 static inline int __rtp_send_eachconnection(struct list_t *e, void *v);
 static inline int __rtp_setup_transfer(struct list_t *e, void *v);
-static inline int __transfer_nal_h26x(struct list_head_t *trans_list, unsigned char *nalptr, size_t nalsize, char isH265);
+static int __rtsp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
+    const unsigned char *body, int body_len, int marker);
 static inline int __transfer_nal_mpga(struct list_head_t *trans_list, unsigned char *ptr, size_t size);
 static inline int __retrieve_sprop(rtsp_handle h, unsigned char *buf, size_t len);
 
@@ -39,14 +40,15 @@ struct __transfer_set_t {
  *              PRIVATE FUNCTIONS
  ******************************************************************************/
 
-static inline int __transfer_nal_h26x(struct list_head_t *trans_list, unsigned char *nalptr, size_t nalsize, char isH265)
+/* emit callback for rtp_packetize_nal: lay the FU/payload headers and body into
+   one RTP packet template and fan it out to every connection. Per-connection
+   sequence/timestamp/SSRC stamping (and the marker-driven AU timestamp advance)
+   happen in __rtp_send_eachconnection. */
+static int __rtsp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
+    const unsigned char *body, int body_len, int marker)
 {
+    struct list_head_t *trans_list = vctx;
     struct nal_rtp_t rtp;
-    unsigned int nri = isH265 ? (nalptr[0] & 0x81) : (nalptr[0] & 0x60);
-    unsigned int pt  = isH265 ? (nalptr[0] >> 1 & 0x3F) : (nalptr[0] & 0x1F);
-    unsigned int ids = isH265 ? nalptr[1] : 0;
-    char head = isH265 ? 3 : 2;
-
     rtp_hdr_t *p_header = &(rtp.packet.header);
     unsigned char *payload = rtp.packet.payload;
 
@@ -55,76 +57,13 @@ static inline int __transfer_nal_h26x(struct list_head_t *trans_list, unsigned c
     p_header->x = 0;
     p_header->cc = 0;
     p_header->pt = 96 & 0x7F;
+    p_header->m = marker ? 1 : 0;
 
-    if (nalsize < 4) return SUCCESS;
+    if (hdr_len) memcpy(payload, hdr, hdr_len);
+    memcpy(payload + hdr_len, body, body_len);
+    rtp.rtpsize = hdr_len + body_len + sizeof(rtp_hdr_t);
 
-    if (nalsize <= __RTP_MAXPAYLOADSIZE) {
-        /* single packet */
-        /* SPS, PPS, SEI is not marked */
-        if ((isH265 && pt < H265_NAL_TYPE_VPS) ||
-            (!isH265 &&
-                pt != H264_NAL_TYPE_SPS && 
-                pt != H264_NAL_TYPE_PPS &&
-                pt != H264_NAL_TYPE_SEI)) { 
-            p_header->m = 1;
-        } else {
-            p_header->m = 0;
-        }
-
-        memcpy(payload, nalptr, nalsize);
-
-        rtp.rtpsize = nalsize + sizeof(rtp_hdr_t);
-
-        ASSERT(__rtp_send(&rtp, trans_list) == SUCCESS, return FAILURE);
-    } else {
-        nalptr += isH265 ? 2 : 1;
-        nalsize -= isH265 ? 2 : 1;
-
-        if (isH265) {
-            payload[0] = 49 << 1;
-            payload[0] |= nri;
-            payload[1] = ids;
-            payload[2] = pt;
-        } else {
-            payload[0] = 28;
-            payload[0] |= nri;
-            payload[1] = pt;
-        }
-        payload[head - 1] |= 1 << 7;
-
-        /* send fragmented nal */
-        while (nalsize > __RTP_MAXPAYLOADSIZE - head) {
-            p_header->m = 0;
-
-            memcpy(&(payload[head]), nalptr, __RTP_MAXPAYLOADSIZE - head);
-
-            rtp.rtpsize = sizeof(rtp_hdr_t) + __RTP_MAXPAYLOADSIZE;
-
-            nalptr += __RTP_MAXPAYLOADSIZE - head;
-            nalsize -= __RTP_MAXPAYLOADSIZE - head;
-
-            ASSERT(__rtp_send(&rtp, trans_list) == SUCCESS, return FAILURE);
-
-            /* intended xor. blame vim :( */
-            payload[head - 1] &= 0xFF ^ (1<<7); 
-        }
-
-        /* send trailing nal */
-        p_header->m = 1;
-
-        payload[head - 1] |= 1 << 6;
-
-        /* intended xor. blame vim :( */
-        payload[head - 1] &= 0xFF ^ (1<<7);
-
-        rtp.rtpsize = nalsize + sizeof(rtp_hdr_t) + head;
-
-        memcpy(&(payload[head]), nalptr, nalsize);
-
-        ASSERT(__rtp_send(&rtp, trans_list) == SUCCESS, return FAILURE);
-    }
-
-    return SUCCESS;
+    return __rtp_send(&rtp, trans_list) == SUCCESS ? 0 : -1;
 }
 
 static inline int __transfer_nal_mpga(struct list_head_t *trans_list, unsigned char *ptr, size_t size)
@@ -464,18 +403,28 @@ int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265)
         for (int i = 0; i < stream->count; i++) {
             unsigned char *buf = stream->pack[i].data + stream->pack[i].offset;
             size_t len = stream->pack[i].length - stream->pack[i].offset;
-            unsigned char *nalptr = buf;
-            size_t single_len = 0;
+            int last_pack = (i == stream->count - 1);
 
-            /* RFC 6184/7798 payloads must not carry Annex-B start codes:
-               split multi-NAL packs and strip the 00 00 00 01 prefixes */
+            /* RFC 6184/7798 payloads must not carry Annex-B start codes: split
+               multi-NAL packs and packetize each NAL on its own. The marker
+               rides only the last NAL of the access unit's last pack. */
             if (len >= 4 && !buf[0] && !buf[1] && !buf[2] && buf[3] == 1) {
-                while (__split_nal(buf, &nalptr, &single_len, len) == SUCCESS)
-                    ASSERT(__transfer_nal_h26x(&(trans.list_head),
-                        nalptr, single_len, h->isH265) == SUCCESS, goto error);
+                unsigned char *it = buf, *cur;
+                size_t it_len = 0, cur_len;
+                int have = __split_nal(buf, &it, &it_len, len) == SUCCESS;
+                while (have) {
+                    cur = it;
+                    cur_len = it_len;
+                    int more = __split_nal(buf, &it, &it_len, len) == SUCCESS;
+                    ASSERT(rtp_packetize_nal(cur, (int)cur_len, h->isH265,
+                        __RTP_MAXPAYLOADSIZE, last_pack && !more,
+                        __rtsp_emit, &(trans.list_head)) == 0, goto error);
+                    have = more;
+                }
             } else {
-                ASSERT(__transfer_nal_h26x(&(trans.list_head),
-                    buf, len, h->isH265) == SUCCESS, goto error);
+                ASSERT(rtp_packetize_nal(buf, (int)len, h->isH265,
+                    __RTP_MAXPAYLOADSIZE, last_pack,
+                    __rtsp_emit, &(trans.list_head)) == 0, goto error);
             }
         }
         ASSERT(list_map_inline(&(trans.list_head), (__rtcp_poll), &track_id) == SUCCESS, goto error);

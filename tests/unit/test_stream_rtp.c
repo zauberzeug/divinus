@@ -99,6 +99,44 @@ static void verify_fu(int rfd, int is_h265, int nal_size) {
            is_h265 ? "H265" : "H264", nal_size, frags);
 }
 
+/* Send one Annex-B pack that glues several NALs together (the encoder hands a
+   keyframe access unit as VPS+SPS+PPS+IDR in a single pack) and assert the
+   sender splits it into one RTP NAL stream per NAL: each NAL's type appears
+   un-glued on the wire, the marker rides only the last NAL of the frame, and
+   every packet shares the frame's timestamp. Guards the keyframe defect where
+   the whole pack went out as a single FU of type VPS and no client saw a PPS. */
+static void verify_split(int rfd) {
+    /* H.265 NAL headers: type in bits 1..6 of byte 0, layer 0 / TID 1 in byte 1. */
+    unsigned char vps[] = {0,0,0,1, 32<<1,1, 0x11,0x22,0x33};
+    unsigned char sps[] = {0,0,0,1, 33<<1,1, 0x44,0x55,0x66,0x77};
+    unsigned char pps[] = {0,0,0,1, 34<<1,1, 0x88,0x99};
+    unsigned char idr[] = {0,0,0,1, 19<<1,1, 0xa1,0xa2,0xa3,0xa4,0xa5};
+    unsigned char pack[64];
+    int n = 0;
+    memcpy(pack+n, vps, sizeof(vps)); n += sizeof(vps);
+    memcpy(pack+n, sps, sizeof(sps)); n += sizeof(sps);
+    memcpy(pack+n, pps, sizeof(pps)); n += sizeof(pps);
+    memcpy(pack+n, idr, sizeof(idr)); n += sizeof(idr);
+
+    udp_stream_send_nal((char *)pack, n, 1 /*end_of_frame*/, 1 /*h265*/);
+
+    const int want_type[4] = {32, 33, 34, 19};
+    unsigned char pkt[2048];
+    unsigned int ts0 = 0;
+    for (int i = 0; i < 4; i++) {
+        int len = recvfrom(rfd, pkt, sizeof(pkt), 0, NULL, NULL);
+        assert(len >= RTP_HDR && "expected one RTP packet per split NAL");
+        assert(((pkt[RTP_HDR] >> 1) & 0x3F) == want_type[i] && "NALs emitted un-glued, in order");
+        assert(rtp_marker(pkt) == (i == 3) && "marker only on the last NAL of the frame");
+        if (i == 0) ts0 = rtp_ts(pkt);
+        else assert(rtp_ts(pkt) == ts0 && "every packet of the frame shares one timestamp");
+    }
+    /* No fifth packet: the pack split into exactly four NAL streams. */
+    int extra = recvfrom(rfd, pkt, sizeof(pkt), 0, NULL, NULL);
+    assert(extra < 0 && "pack must split into exactly four NALs, no glued remainder");
+    printf("  glued VPS+SPS+PPS+IDR pack split into 4 NALs, marker on IDR: OK\n");
+}
+
 int main(void) {
     int rfd;
     unsigned short port = recv_sock(&rfd);
@@ -145,6 +183,8 @@ int main(void) {
     verify_fu(rfd, 1, 3500);   /* H.265, RFC 7798 3-byte FU header */
     verify_fu(rfd, 0, 2796);   /* H.264: body 2795 = 2*1398 - 1, old code went negative */
     verify_fu(rfd, 1, 2795);   /* H.265: body 2793 = 2*1397 - 1, old code went negative */
+
+    verify_split(rfd);         /* multi-NAL keyframe pack splits into separate NALs */
 
     udp_stream_close();
     close(rfd);

@@ -6,9 +6,10 @@ extern "C" {
 #endif
 
 #include "../hal/tools.h"
+#include "../fmt/rtppkt.h"
 
 /******************************************************************************
- *              DEFINITIONS 
+ *              DEFINITIONS
  ******************************************************************************/
 #define __RTP_MAXPAYLOADSIZE 1460
 
@@ -59,39 +60,8 @@ static inline int __split_nal(unsigned char *buf, unsigned char **nalptr, size_t
  ******************************************************************************/
 static inline int __split_nal(unsigned char *buf, unsigned char **nalptr, size_t *p_len, size_t max_len)
 {
-    int i;
-    int start = -1;
-
-    /* Guard the size_t loop bound below (max_len - 5 underflows for < 5). */
-    if (max_len < 5)
-        return FAILURE;
-
-    for(i = (*nalptr) - buf + *p_len;i<max_len-5;i++) {
-        if(buf[i] == 0x00 &&
-                buf[i+1] == 0x00 &&
-                buf[i+2] == 0x00 &&
-                buf[i+3] == 0x01) {
-            if(start == -1){
-                i += 4;
-                start = i;
-            } else {
-                *nalptr = &(buf[start]);
-                while(buf[i-1] == 0) i--;
-                *p_len = i - start;
-                return SUCCESS;
-            }
-        }
-    }
-
-    if(start == -1) {
-        /* malformed NAL */
-        return FAILURE;
-    }
-
-    *nalptr = &(buf[start]);
-    *p_len = max_len - start;
-
-    return SUCCESS;
+    /* SUCCESS (0) / FAILURE (-1) match nal_next's 0 / -1 contract. */
+    return nal_next(buf, nalptr, p_len, max_len);
 }
 
 #if defined (__cplusplus)
