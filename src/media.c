@@ -90,8 +90,9 @@ int save_video_stream(char index, hal_vidstream *stream) {
        vendor PTS -> absolute epoch-µs instant. 0 if unavailable (each sender
        then keeps its send-time fallback rather than emit a wrong stamp). */
     unsigned long long capture_us = 0;
-    if (stream->count > 0)
-        captime_now(stream->pack[0].timestamp, &capture_us);
+    unsigned long long pts_us = stream->count > 0 ? stream->pack[0].timestamp : 0;
+    if (pts_us)
+        captime_now(pts_us, &capture_us);
 
     switch (chnState[index].payload) {
         case HAL_VIDCODEC_H264:
@@ -100,13 +101,13 @@ int save_video_stream(char index, hal_vidstream *stream) {
             char isH265 = chnState[index].payload == HAL_VIDCODEC_H265 ? 1 : 0;
 
             if (app_config.rtsp_enable && rtspHandle)
-                rtp_send_h26x(rtspHandle, stream, isH265, capture_us);
+                rtp_send_h26x(rtspHandle, stream, isH265, pts_us, capture_us);
 
             if (app_config.stream_enable) {
                 for (int i = 0; i < stream->count; i++) {
                     udp_stream_send_nal(stream->pack[i].data + stream->pack[i].offset,
                         stream->pack[i].length - stream->pack[i].offset,
-                        i == stream->count - 1, isH265);
+                        i == stream->count - 1, isH265, pts_us);
 
                     rtmp_ingest_video(&stream->pack[i], isH265);
                 }

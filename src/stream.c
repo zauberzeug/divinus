@@ -1,4 +1,5 @@
 #include "stream.h"
+#include "hal/captime.h"
 
 static struct udp_stream_ctx *g_udp_ctx = NULL;
 
@@ -298,7 +299,7 @@ static int udp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
  * @return EXIT_SUCCESS or EXIT_FAILURE
  */
 int udp_stream_send_nal(const char *nal_data, int nal_size,
-    int end_of_frame, int is_h265) {
+    int end_of_frame, int is_h265, unsigned long long pts_us) {
     if (!g_udp_ctx || !nal_data || nal_size <= 0) return EXIT_FAILURE;
 
     int total_clients;
@@ -312,6 +313,24 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
     unsigned char *buf = (unsigned char *)nal_data;
 
     pthread_mutex_lock(&g_udp_ctx->mutex);
+
+    if (!g_udp_ctx->frame_in_progress) {
+        /* Frame start: set this access unit's RTP timestamp from the vendor PTS
+           (the monotonic media clock), via the pts_to_rtp90 mapping shared with
+           the RTSP sender (rtp.c). 0 falls back to send-time millis(). The
+           shared rtp_ts_advance guard keeps the 32-bit stamp strictly
+           increasing across the rare duplicate PTS; the per-AU advance happens
+           once here so every NAL of the frame carries the same timestamp. */
+        unsigned int src90 = pts_us ? pts_to_rtp90(pts_us)
+                                    : ((millis() * 90) & UINT32_MAX);
+        for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
+            if (!g_udp_ctx->clients[i].active) continue;
+            g_udp_ctx->clients[i].tstamp =
+                rtp_ts_advance(g_udp_ctx->clients[i].tstamp, src90);
+        }
+        g_udp_ctx->frame_in_progress = 1;
+    }
+
     if (nal_size >= 4 && !buf[0] && !buf[1] && !buf[2] && buf[3] == 1) {
         /* The encoder hands a keyframe access unit as one glued pack
            (VPS+SPS+PPS+IDR). Split it into individual NALs and packetize each
@@ -331,24 +350,8 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
         rtp_packetize_nal(buf, nal_size, is_h265, UDP_MAX_PAYLOAD,
             end_of_frame, udp_emit, &emit_ctx);
     }
+    if (end_of_frame) g_udp_ctx->frame_in_progress = 0;
     pthread_mutex_unlock(&g_udp_ctx->mutex);
-
-    if (end_of_frame) {
-        /* Advance each client's RTP timestamp to the wall clock (90 kHz) so the
-           per-frame delta tracks real elapsed time regardless of the configured
-           frame rate; mirrors the RTSP sender (rtp.c). The monotonic guard keeps
-           the 32-bit stamp strictly increasing when frames land in the same tick. */
-        unsigned int now90 = (millis() * 90) & UINT32_MAX;
-        pthread_mutex_lock(&g_udp_ctx->mutex);
-        for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
-            if (!g_udp_ctx->clients[i].active) continue;
-            unsigned int ts = now90;
-            if ((int)(ts - g_udp_ctx->clients[i].tstamp) <= 0)
-                ts = g_udp_ctx->clients[i].tstamp + 1;
-            g_udp_ctx->clients[i].tstamp = ts;
-        }
-        pthread_mutex_unlock(&g_udp_ctx->mutex);
-    }
 
     return EXIT_SUCCESS;
 }

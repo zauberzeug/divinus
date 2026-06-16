@@ -51,22 +51,63 @@ bool captime_now(unsigned long long pts_us, unsigned long long *out_capture_us);
    buf (snprintf semantics) and returns the character count. */
 int captime_format(char *buf, unsigned long buf_size, unsigned long long capture_us);
 
-/* Map a capture instant (epoch µs) to its 90 kHz RTP timestamp, truncated to
-   32 bits. The single mapping shared by the per-frame RTP stamp (rtp.c) and the
-   RTCP Sender Report, so a frame's RTP timestamp and the SR that anchors it
-   agree by construction. Wraps every 2^32 / 90000 ≈ 13.25 h; the receiver
-   tracks wraps through the SR cadence. */
-unsigned int captime_to_rtp90(unsigned long long capture_us);
+/* Map a vendor PTS instant (µs on the monotonic media clock) to its 90 kHz RTP
+   timestamp, truncated to 32 bits. This is the media clock the per-frame RTP
+   stamp rides — NOT the capture epoch — so the timeline is monotonic by
+   construction (the PTS is CLOCK_MONOTONIC_RAW). The single mapping shared by
+   the RTSP packetizer (rtp.c), the UDP push packetizer (stream.c), and the
+   RTCP SR's rtp_ts, so every RTP timestamp a receiver sees agrees by
+   construction. Wraps every 2^32 / 90000 ≈ 13.25 h; the receiver tracks wraps
+   through the signed 32-bit delta against the SR anchor. */
+unsigned int pts_to_rtp90(unsigned long long pts_us);
 
-/* The sender-info timestamps of an RTCP Sender Report (RFC 3550 §6.4.1), all
-   derived from one capture instant so the NTP wall-clock and the RTP timeline
-   it anchors describe the SAME instant. Host byte order; the caller applies
-   htonl when writing the packet. */
+/* Advance a strictly-increasing 32-bit RTP timestamp from prev to next, the
+   monotonic guard shared by both packetizers. Returns next when it is genuinely
+   ahead of prev (signed 32-bit modular compare, so it is wrap-correct), else
+   prev + 1 so a duplicate/non-advancing source still moves the timeline forward
+   by one tick. Feeding it pts_to_rtp90(pts) values keeps it harmless: the PTS
+   is monotonic, so it only ever fires on a genuine duplicate PTS. (Feeding it
+   the capture EPOCH was the bug — a stale millis()*90 seed sat numerically
+   above the epoch-mod-2^32 value, so every frame "non-advanced" and the wire
+   timestamp crawled +1 forever near the millis origin.) */
+unsigned int rtp_ts_advance(unsigned int prev, unsigned int next);
+
+/* The sender-info timestamps of an RTCP Sender Report (RFC 3550 §6.4.1). The
+   NTP wall-clock and the RTP timestamp describe the SAME anchor frame, but on
+   two clocks: NTP carries the absolute capture epoch, RTP-ts rides the PTS
+   media clock (so a receiver's RTP delta is NTP-immune). Host byte order; the
+   caller applies htonl when writing the packet. */
 typedef struct {
     unsigned int ntp_sec;   /* seconds since 1900-01-01 (the NTP epoch) */
     unsigned int ntp_frac;  /* binary fraction of a second, 2^-32 units */
-    unsigned int rtp_ts;    /* 90 kHz RTP timestamp of that same instant */
+    unsigned int rtp_ts;    /* 90 kHz PTS-media-clock timestamp of that frame */
 } captime_sr_ts;
 
-/* Map a capture instant (epoch µs) to the SR sender-info timestamps above. */
-captime_sr_ts captime_sr_from_capture(unsigned long long capture_us);
+/* Build the SR sender-info timestamps for one anchor frame: rtp_ts =
+   pts_to_rtp90(pts_anchor_us) (the media clock the frames ride), ntp = the
+   absolute capture epoch capture_us. Passing both from the same frame keeps
+   the (NTP, RTP-ts) pair describing one instant by construction. */
+captime_sr_ts captime_sr_anchor(unsigned long long pts_anchor_us,
+                                unsigned long long capture_us);
+
+/* Encode a capture instant (epoch µs) as an 8-byte big-endian Q32.32 NTP
+   timestamp (seconds since 1900 in the high word, binary fraction in the low),
+   the same value the RTCP SR carries. This is the payload of the per-frame
+   abs-capture-time RTP header extension; the single encoder shared by the SR
+   and the extension so both describe a frame with one consistent absolute time. */
+void captime_ntp_be64(unsigned char out[8], unsigned long long capture_us);
+
+/* The WebRTC abs-capture-time RTP header extension id advertised in the SDP
+   (a=extmap) and written into the one-byte header on the wire; sender and
+   receiver must agree on it. 1–14 is the valid one-byte range (RFC 8285 §4.2).
+   The full extension block is the 0xBEDE profile word + a 1-word length + the
+   element (id/len byte + 8-byte payload) padded to a 32-bit boundary. */
+#define CAPTIME_ABS_CAPTURE_EXT_ID    10u
+#define CAPTIME_ABS_CAPTURE_EXT_BYTES 16
+
+/* Write the complete abs-capture-time one-byte RTP header extension block
+   (RFC 8285 §4.2; WebRTC abs-capture-time, offset field omitted) for capture_us
+   into dst, which must hold at least CAPTIME_ABS_CAPTURE_EXT_BYTES bytes.
+   Returns the number of bytes written. ext_id must be in 1..14. */
+int captime_abs_capture_ext(unsigned char *dst, unsigned int ext_id,
+                            unsigned long long capture_us);

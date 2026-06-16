@@ -32,10 +32,11 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
     t = &con->trans[track_id];
 
     if (t->capture_us) {
-        /* Anchor the NTP wall-clock and the RTP timestamp to one capture
-           instant, so the receiver maps the RTP timeline onto absolute time.
-           Both come from the shared captime helper used to stamp the frames. */
-        captime_sr_ts sr = captime_sr_from_capture(t->capture_us);
+        /* Anchor the pair to one frame: rtp_ts on the PTS media clock (the same
+           clock the per-frame stamps ride) and the NTP wall-clock on that
+           frame's absolute capture instant, so the receiver maps the RTP
+           timeline onto absolute time with an NTP-immune delta. */
+        captime_sr_ts sr = captime_sr_anchor(t->capture_pts_us, t->capture_us);
         ntp_sec = sr.ntp_sec;
         ntp_frac = sr.ntp_frac;
         rtp_ts = sr.rtp_ts;

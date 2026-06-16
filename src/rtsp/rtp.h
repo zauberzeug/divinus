@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include "../hal/tools.h"
+#include "../hal/captime.h"
 #include "../fmt/rtppkt.h"
 
 /******************************************************************************
@@ -44,7 +45,9 @@ typedef struct {
 struct nal_rtp_t {
     struct {
         rtp_hdr_t header;
-        unsigned char payload[__RTP_MAXPAYLOADSIZE];
+        /* room for a full-size payload plus the optional abs-capture-time RTP
+           header extension prepended on the first packet of an access unit */
+        unsigned char payload[__RTP_MAXPAYLOADSIZE + CAPTIME_ABS_CAPTURE_EXT_BYTES];
     } packet;
     int    rtpsize;
     struct list_t list_entry;

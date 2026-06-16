@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "stream.h"
+#include "hal/captime.h"
 
 #define RTP_HDR 12
 
@@ -65,7 +66,7 @@ static void verify_fu(int rfd, int is_h265, int nal_size) {
     int fu = is_h265 ? 3 : 2;         /* FU header bytes prepended per fragment */
     unsigned char want_type = is_h265 ? ((nal[0] >> 1) & 0x3F) : (nal[0] & 0x1F);
 
-    udp_stream_send_nal((char *)nal, nal_size, 1, is_h265);
+    udp_stream_send_nal((char *)nal, nal_size, 1, is_h265, 0);
 
     unsigned char pkt[2048], body[8192];
     int body_len = 0, frags = 0, markers = 0;
@@ -118,7 +119,7 @@ static void verify_split(int rfd) {
     memcpy(pack+n, pps, sizeof(pps)); n += sizeof(pps);
     memcpy(pack+n, idr, sizeof(idr)); n += sizeof(idr);
 
-    udp_stream_send_nal((char *)pack, n, 1 /*end_of_frame*/, 1 /*h265*/);
+    udp_stream_send_nal((char *)pack, n, 1 /*end_of_frame*/, 1 /*h265*/, 0);
 
     const int want_type[4] = {32, 33, 34, 19};
     unsigned char pkt[2048];
@@ -142,7 +143,7 @@ static void verify_split(int rfd) {
 static void assert_delivers(int rfd) {
     char nal[100];
     memset(nal, 0x41, sizeof(nal));
-    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0, 0);
     unsigned char pkt[256];
     assert(recvfrom(rfd, pkt, sizeof(pkt), 0, NULL, NULL) >= RTP_HDR);
 }
@@ -185,11 +186,11 @@ static void test_set_client_repoints(int rfd_a, unsigned short port_a) {
     assert(udp_stream_init(0, NULL) == EXIT_SUCCESS);
 
     assert(udp_stream_set_client("127.0.0.1", port_a) == 0);
-    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0, 0);
     assert(recvfrom(rfd_a, pkt, sizeof(pkt), 0, NULL, NULL) >= RTP_HDR);
 
     assert(udp_stream_set_client("127.0.0.1", port_b) == 0);
-    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0, 0);
     assert(recvfrom(rfd_b, pkt, sizeof(pkt), 0, NULL, NULL) >= RTP_HDR);
     assert(recvfrom(rfd_a, pkt, sizeof(pkt), 0, NULL, NULL) < 0 &&
            "old destination receives nothing after a re-point");
@@ -214,9 +215,9 @@ int main(void) {
     memset(nal, 0x41, sizeof(nal));  /* H.264 non-IDR slice header byte */
 
     /* --- Frame of three single-packet NALs: marker only on the last --- */
-    udp_stream_send_nal(nal, sizeof(nal), 0, 0);
-    udp_stream_send_nal(nal, sizeof(nal), 0, 0);
-    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 0, 0, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 0, 0, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0, 0);
 
     recv_pkt(rfd, pkt, sizeof(pkt));
     unsigned int f1_ts = rtp_ts(pkt);
@@ -230,8 +231,8 @@ int main(void) {
     printf("  marker set only on last NAL; one timestamp per frame: OK\n");
 
     /* --- Next frame: timestamp must advance, again shared across NALs --- */
-    udp_stream_send_nal(nal, sizeof(nal), 0, 0);
-    udp_stream_send_nal(nal, sizeof(nal), 1, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 0, 0, 0);
+    udp_stream_send_nal(nal, sizeof(nal), 1, 0, 0);
 
     recv_pkt(rfd, pkt, sizeof(pkt));
     unsigned int f2_ts = rtp_ts(pkt);
@@ -241,6 +242,25 @@ int main(void) {
     assert(rtp_ts(pkt) == f2_ts);
     assert((int)(f2_ts - f1_ts) > 0 && "timestamp must advance between frames");
     printf("  timestamp advances between frames: OK\n");
+
+    /* --- RTP timestamp rides the vendor PTS: the inter-frame delta equals
+       pts_to_rtp90(Δpts), not wall-clock send time. This is the media clock
+       the absolute-capture-time redesign feeds from the PTS through the shared
+       pts_to_rtp90 / rtp_ts_advance helpers (same as the RTSP sender). --- */
+    unsigned long long base_pts = (unsigned long long)millis() * 1000ull;
+    unsigned int pts_ts[4];
+    for (int i = 0; i < 4; i++) {
+        udp_stream_send_nal(nal, sizeof(nal), 1, 0,
+            base_pts + (unsigned long long)i * 100000ull);   /* frames 100 ms apart */
+        recv_pkt(rfd, pkt, sizeof(pkt));
+        pts_ts[i] = rtp_ts(pkt);
+    }
+    /* The last frames are past the one-frame seed transient; 100 ms at 90 kHz
+       is exactly pts_to_rtp90(100000) = 9000 ticks, regardless of send timing. */
+    assert((int)(pts_ts[2] - pts_ts[1]) > 0 && (int)(pts_ts[3] - pts_ts[2]) > 0);
+    assert(pts_ts[2] - pts_ts[1] == pts_to_rtp90(100000ull));
+    assert(pts_ts[3] - pts_ts[2] == pts_to_rtp90(100000ull));
+    printf("  RTP timestamp delta tracks pts_to_rtp90(Δpts): OK\n");
 
     /* --- Fragmentation: H.264 FU-A and H.265 FU, incl. the off-by-one size
        (nal_size just over one chunk) that used to drive payload_size negative --- */
