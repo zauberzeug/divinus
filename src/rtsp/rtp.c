@@ -35,7 +35,18 @@ struct __transfer_set_t {
     struct list_head_t list_head;
     rtsp_handle h;
     int track_id;
+    unsigned long long pts_us;      /* vendor frame PTS µs: the RTP media clock */
     unsigned long long capture_us;  /* frame capture wall-clock µs, 0 = unknown */
+};
+
+/* Context threaded into __rtsp_emit for one access unit: the connection list to
+   fan each packet out to, the frame's absolute capture time for the per-frame
+   abs-capture-time header extension (0 = omit it), and a latch so the extension
+   rides only the FIRST packet of the AU (WebRTC: the frame's first packet). */
+struct __emit_ctx_t {
+    struct list_head_t *trans_list;
+    unsigned long long capture_us;
+    int au_started;
 };
 
 /******************************************************************************
@@ -49,10 +60,11 @@ struct __transfer_set_t {
 static int __rtsp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
     const unsigned char *body, int body_len, int marker)
 {
-    struct list_head_t *trans_list = vctx;
+    struct __emit_ctx_t *ectx = vctx;
     struct nal_rtp_t rtp;
     rtp_hdr_t *p_header = &(rtp.packet.header);
     unsigned char *payload = rtp.packet.payload;
+    int ext_len = 0;
 
     p_header->version = 2;
     p_header->p = 0;
@@ -61,11 +73,21 @@ static int __rtsp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
     p_header->pt = 96 & 0x7F;
     p_header->m = marker ? 1 : 0;
 
-    if (hdr_len) memcpy(payload, hdr, hdr_len);
-    memcpy(payload + hdr_len, body, body_len);
-    rtp.rtpsize = hdr_len + body_len + sizeof(rtp_hdr_t);
+    /* Prepend the abs-capture-time RTP header extension to the first packet of
+       the access unit, when a capture time is known. It self-anchors the frame
+       to an absolute instant per-frame (the SR is the periodic fallback). */
+    if (!ectx->au_started && ectx->capture_us) {
+        p_header->x = 1;
+        ext_len = captime_abs_capture_ext(payload, CAPTIME_ABS_CAPTURE_EXT_ID,
+            ectx->capture_us);
+    }
+    ectx->au_started = 1;
 
-    return __rtp_send(&rtp, trans_list) == SUCCESS ? 0 : -1;
+    if (hdr_len) memcpy(payload + ext_len, hdr, hdr_len);
+    memcpy(payload + ext_len + hdr_len, body, body_len);
+    rtp.rtpsize = ext_len + hdr_len + body_len + sizeof(rtp_hdr_t);
+
+    return __rtp_send(&rtp, ectx->trans_list) == SUCCESS ? 0 : -1;
 }
 
 static inline int __transfer_nal_mpga(struct list_head_t *trans_list, unsigned char *ptr, size_t size)
@@ -108,15 +130,15 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
     if (con->stalled || con->con_state != __CON_S_PLAYING) return SUCCESS;
 
     if (con->trans[track_id].au_pending) {
-        /* Prefer the frame capture time (90 kHz, set per-frame in
-           __rtp_setup_transfer); fall back to send-time only when capture
-           time is unknown. The monotonic bump keeps the timeline strictly
-           increasing across frames either way. */
+        /* The per-AU RTP timestamp rides the vendor PTS (90 kHz media clock,
+           set in __rtp_setup_transfer via pts_to_rtp90); fall back to send-time
+           only when the PTS is unknown. rtp_ts_advance keeps the timeline
+           strictly increasing — harmless now that the source is the monotonic
+           PTS, firing only on a genuine duplicate PTS. */
         unsigned int ts = con->trans[track_id].capture_ts90;
         if (!ts) ts = (millis() * 90) & UINT32_MAX;
-        if ((int)(ts - con->trans[track_id].rtp_timestamp) <= 0)
-            ts = con->trans[track_id].rtp_timestamp + 1;
-        con->trans[track_id].rtp_timestamp = ts;
+        con->trans[track_id].rtp_timestamp =
+            rtp_ts_advance(con->trans[track_id].rtp_timestamp, ts);
         con->trans[track_id].au_pending = 0;
     }
     rtp->packet.header.seq = htons(con->trans[track_id].rtp_seq);
@@ -216,20 +238,21 @@ static inline int __rtp_setup_transfer(struct list_t *e, void *v)
 
         trans->con = con;
 
-        /* Carry the frame capture time (wall-clock µs) into the RTP timestamp
-           at 90 kHz; 0 leaves the send-time fallback in __rtp_send_eachconn.
-           The 90 kHz value is itself 0 once per wrap (~13.25 h), which would
-           collide with the "unknown" sentinel — nudge it to 1 tick so a known
-           capture time never silently reverts to send-time. The full µs instant
-           is kept too, for the RTCP SR to anchor its NTP/RTP-ts pair. */
-        if (trans_set->capture_us) {
-            unsigned int ts90 = captime_to_rtp90(trans_set->capture_us);
+        /* The per-AU RTP timestamp rides the vendor PTS (the monotonic media
+           clock), at 90 kHz; 0 leaves the send-time fallback in
+           __rtp_send_eachconn. The 90 kHz value is itself 0 once per wrap
+           (~13.25 h), which would collide with the "unknown" sentinel — nudge
+           it to 1 tick so a known PTS never silently reverts to send-time. The
+           PTS and the capture epoch are kept too: the RTCP SR anchors its
+           rtp_ts to the PTS and its NTP to the capture instant of this frame. */
+        if (trans_set->pts_us) {
+            unsigned int ts90 = pts_to_rtp90(trans_set->pts_us);
             con->trans[trans_set->track_id].capture_ts90 = ts90 ? ts90 : 1u;
-            con->trans[trans_set->track_id].capture_us = trans_set->capture_us;
         } else {
             con->trans[trans_set->track_id].capture_ts90 = 0;
-            con->trans[trans_set->track_id].capture_us = 0;
         }
+        con->trans[trans_set->track_id].capture_pts_us = trans_set->pts_us;
+        con->trans[trans_set->track_id].capture_us = trans_set->capture_us;
 
         MUST(list_push(&trans_set->list_head, &trans->list_entry) == SUCCESS,
             goto error);
@@ -391,11 +414,11 @@ void rtp_disable_audio(rtsp_handle h)
 }
 
 int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265,
-    unsigned long long capture_us)
+    unsigned long long pts_us, unsigned long long capture_us)
 {
     int ret = FAILURE;
     int track_id = 0;
-    struct __transfer_set_t trans = { .capture_us = capture_us };
+    struct __transfer_set_t trans = { .pts_us = pts_us, .capture_us = capture_us };
 
     /* checkout RTP packet */
     DASSERT(h, return FAILURE);
@@ -423,6 +446,8 @@ int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265,
     rtsp_unlock(h);
     
     if (trans.list_head.list) {
+        struct __emit_ctx_t emit_ctx = { .trans_list = &trans.list_head,
+            .capture_us = capture_us, .au_started = 0 };
         for (int i = 0; i < stream->count; i++) {
             unsigned char *buf = stream->pack[i].data + stream->pack[i].offset;
             size_t len = stream->pack[i].length - stream->pack[i].offset;
@@ -430,7 +455,10 @@ int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265,
 
             /* RFC 6184/7798 payloads must not carry Annex-B start codes: split
                multi-NAL packs and packetize each NAL on its own. The marker
-               rides only the last NAL of the access unit's last pack. */
+               rides only the last NAL of the access unit's last pack. The first
+               packet of the AU also carries the abs-capture-time extension, so
+               cap its NAL payload by the extension size to keep that packet
+               within the same MTU budget as the rest. */
             if (len >= 4 && !buf[0] && !buf[1] && !buf[2] && buf[3] == 1) {
                 unsigned char *it = buf, *cur;
                 size_t it_len = 0, cur_len;
@@ -439,15 +467,19 @@ int rtp_send_h26x(rtsp_handle h, hal_vidstream *stream, char isH265,
                     cur = it;
                     cur_len = it_len;
                     int more = __split_nal(buf, &it, &it_len, len) == SUCCESS;
+                    int max_pay = __RTP_MAXPAYLOADSIZE - (!emit_ctx.au_started &&
+                        capture_us ? CAPTIME_ABS_CAPTURE_EXT_BYTES : 0);
                     ASSERT(rtp_packetize_nal(cur, (int)cur_len, h->isH265,
-                        __RTP_MAXPAYLOADSIZE, last_pack && !more,
-                        __rtsp_emit, &(trans.list_head)) == 0, goto error);
+                        max_pay, last_pack && !more,
+                        __rtsp_emit, &emit_ctx) == 0, goto error);
                     have = more;
                 }
             } else {
+                int max_pay = __RTP_MAXPAYLOADSIZE - (!emit_ctx.au_started &&
+                    capture_us ? CAPTIME_ABS_CAPTURE_EXT_BYTES : 0);
                 ASSERT(rtp_packetize_nal(buf, (int)len, h->isH265,
-                    __RTP_MAXPAYLOADSIZE, last_pack,
-                    __rtsp_emit, &(trans.list_head)) == 0, goto error);
+                    max_pay, last_pack,
+                    __rtsp_emit, &emit_ctx) == 0, goto error);
             }
         }
         ASSERT(list_map_inline(&(trans.list_head), (__rtcp_poll), &track_id) == SUCCESS, goto error);

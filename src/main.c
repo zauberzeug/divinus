@@ -72,7 +72,8 @@ int main(int argc, char *argv[]) {
     server_start();
 
     if (app_config.rtsp_enable) {
-        rtspHandle = rtsp_create(RTSP_MAXIMUM_CONNECTIONS, app_config.rtsp_port, 1);
+        rtspHandle = rtsp_create(RTSP_MAXIMUM_CONNECTIONS, app_config.rtsp_port, 1,
+            app_config.mp4_fps);
         if (!rtspHandle)
             HAL_DANGER("rtsp", "Failed to create RTSP server on port %d!\n",
                 app_config.rtsp_port);
