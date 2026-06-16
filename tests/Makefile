@@ -26,6 +26,8 @@ test_rtmp_chunk_DEPS := $(SRCDIR)/rtmp.c
 test_http_headers_SRC := $(SRCDIR)/http_headers.c $(SRCDIR)/hal/tools.c
 test_config_bounds_SRC := $(SRCDIR)/hal/config.c $(SRCDIR)/hal/tools.c \
                           $(SRCDIR)/stream_cfg.c
+test_config_disabled_stream_SRC := $(SRCDIR)/app_config.c $(SRCDIR)/hal/config.c \
+                                   $(SRCDIR)/hal/tools.c $(SRCDIR)/stream_cfg.c
 test_api_stream_SRC := $(SRCDIR)/stream_cfg.c $(SRCDIR)/hal/tools.c \
                        $(SRCDIR)/hal/config.c
 test_http_post_SRC := $(SRCDIR)/http_post.c

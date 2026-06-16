@@ -273,7 +273,16 @@ enum ConfigError app_config_parse(void) {
     app_config.audio_bitrate = 128;
     app_config.audio_gain = 0;
     app_config.jpeg_enable = false;
+    app_config.jpeg_width = 1920;
+    app_config.jpeg_height = 1080;
+    app_config.jpeg_qfactor = 70;
+
     app_config.mp4_enable = false;
+    app_config.mp4_width = 1920;
+    app_config.mp4_height = 1080;
+    app_config.mp4_fps = 30;
+    app_config.mp4_gop = 30;
+    app_config.mp4_bitrate = 1024;
 
     app_config.mjpeg_enable = false;
     app_config.mjpeg_fps = 15;
@@ -494,107 +503,92 @@ enum ConfigError app_config_parse(void) {
     }
 
     parse_bool(&ini, "mp4", "enable", &app_config.mp4_enable);
-    if (app_config.mp4_enable) {
-        {
-            const char *possible_values[] = {"H.264", "H.265", "H264", "H265", "AVC", "HEVC"};
-            const int count = sizeof(possible_values) / sizeof(const char *);
-            int val = 0;
-            parse_enum(&ini, "mp4", "codec", (void *)&val,
-                possible_values, count, 0);
-            if (val % 2)
-                app_config.mp4_codecH265 = true;
-            else
-                app_config.mp4_codecH265 = false;
-        }
-        {
-            const char *possible_values[] = {"CBR", "VBR", "QP", "ABR", "AVBR"};
-            const int count = sizeof(possible_values) / sizeof(const char *);
-            int val = 0;
-            parse_enum(&ini, "mp4", "mode", (void *)&val,
-                possible_values, count, 0);
-            app_config.mp4_mode = val;
-        }
-        err = parse_int(
-            &ini, "mp4", "width", 160, INT_MAX, &app_config.mp4_width);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "mp4", "height", 120, INT_MAX, &app_config.mp4_height);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(&ini, "mp4", "fps", 1, INT_MAX, &app_config.mp4_fps);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        app_config.mp4_gop = app_config.mp4_fps;
-        parse_int(&ini, "mp4", "gop", 1, INT_MAX, &app_config.mp4_gop);
-        {
-            const char *possible_values[] = {"BP", "MP", "HP"};
-            const int count = sizeof(possible_values) / sizeof(const char *);
-            const char *possible_values2[] = {"BASELINE", "MAIN", "HIGH"};
-            const int count2 = sizeof(possible_values2) / sizeof(const char *);
-            int val = 0;
-            if (parse_enum(&ini, "mp4", "profile", (void *)&val,
-                    possible_values, count, 0) != CONFIG_OK)
-                parse_enum( &ini, "mp4", "profile", (void *)&val,
-                    possible_values2, count2, 0);
-            app_config.mp4_profile = val;
-        }
-        parse_int(&ini, "mp4", "profile", 0, 2, &app_config.mp4_profile);
-
-        err = parse_int(
-            &ini, "mp4", "bitrate", 32, INT_MAX, &app_config.mp4_bitrate);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
+    /* Parse the params even when the stream is disabled, so a disabled stream
+       keeps its configured values (the writer always emits them). A malformed
+       value is only fatal when the stream is actually enabled. */
+    {
+        const char *possible_values[] = {"H.264", "H.265", "H264", "H265", "AVC", "HEVC"};
+        const int count = sizeof(possible_values) / sizeof(const char *);
+        int val = 0;
+        parse_enum(&ini, "mp4", "codec", (void *)&val,
+            possible_values, count, 0);
+        app_config.mp4_codecH265 = val % 2;
     }
+    {
+        const char *possible_values[] = {"CBR", "VBR", "QP", "ABR", "AVBR"};
+        const int count = sizeof(possible_values) / sizeof(const char *);
+        int val = 0;
+        parse_enum(&ini, "mp4", "mode", (void *)&val,
+            possible_values, count, 0);
+        app_config.mp4_mode = val;
+    }
+    err = parse_int(&ini, "mp4", "width", 160, INT_MAX, &app_config.mp4_width);
+    if (err != CONFIG_OK && app_config.mp4_enable)
+        goto RET_ERR;
+    err = parse_int(&ini, "mp4", "height", 120, INT_MAX, &app_config.mp4_height);
+    if (err != CONFIG_OK && app_config.mp4_enable)
+        goto RET_ERR;
+    err = parse_int(&ini, "mp4", "fps", 1, INT_MAX, &app_config.mp4_fps);
+    if (err != CONFIG_OK && app_config.mp4_enable)
+        goto RET_ERR;
+    app_config.mp4_gop = app_config.mp4_fps;
+    parse_int(&ini, "mp4", "gop", 1, INT_MAX, &app_config.mp4_gop);
+    {
+        const char *possible_values[] = {"BP", "MP", "HP"};
+        const int count = sizeof(possible_values) / sizeof(const char *);
+        const char *possible_values2[] = {"BASELINE", "MAIN", "HIGH"};
+        const int count2 = sizeof(possible_values2) / sizeof(const char *);
+        int val = 0;
+        if (parse_enum(&ini, "mp4", "profile", (void *)&val,
+                possible_values, count, 0) != CONFIG_OK)
+            parse_enum( &ini, "mp4", "profile", (void *)&val,
+                possible_values2, count2, 0);
+        app_config.mp4_profile = val;
+    }
+    parse_int(&ini, "mp4", "profile", 0, 2, &app_config.mp4_profile);
+    err = parse_int(&ini, "mp4", "bitrate", 32, INT_MAX, &app_config.mp4_bitrate);
+    if (err != CONFIG_OK && app_config.mp4_enable)
+        goto RET_ERR;
 
     err = parse_bool(&ini, "jpeg", "enable", &app_config.jpeg_enable);
     if (err != CONFIG_OK)
         goto RET_ERR;
-    if (app_config.jpeg_enable) {
-        err = parse_int(
-            &ini, "jpeg", "width", 160, INT_MAX, &app_config.jpeg_width);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "jpeg", "height", 120, INT_MAX, &app_config.jpeg_height);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err =
-            parse_int(&ini, "jpeg", "qfactor", 1, 99, &app_config.jpeg_qfactor);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-    }
+    /* Parse even when disabled so configured values survive; fatal only if enabled. */
+    err = parse_int(&ini, "jpeg", "width", 160, INT_MAX, &app_config.jpeg_width);
+    if (err != CONFIG_OK && app_config.jpeg_enable)
+        goto RET_ERR;
+    err = parse_int(&ini, "jpeg", "height", 120, INT_MAX, &app_config.jpeg_height);
+    if (err != CONFIG_OK && app_config.jpeg_enable)
+        goto RET_ERR;
+    err = parse_int(&ini, "jpeg", "qfactor", 1, 99, &app_config.jpeg_qfactor);
+    if (err != CONFIG_OK && app_config.jpeg_enable)
+        goto RET_ERR;
 
     err = parse_bool(&ini, "mjpeg", "enable", &app_config.mjpeg_enable);
     if (err != CONFIG_OK)
         goto RET_ERR;
-    if (app_config.mjpeg_enable) {
-        {
-            const char *possible_values[] = {"CBR", "VBR", "QP"};
-            const int count = sizeof(possible_values) / sizeof(const char *);
-            int val = 0;
-            parse_enum(&ini, "mjpeg", "mode", (void *)&val,
-                possible_values, count, 0);
-            app_config.mjpeg_mode = val;
-        }
-        err = parse_int(
-            &ini, "mjpeg", "width", 160, INT_MAX, &app_config.mjpeg_width);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "mjpeg", "height", 120, INT_MAX, &app_config.mjpeg_height);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err =
-            parse_int(&ini, "mjpeg", "fps", 1, INT_MAX, &app_config.mjpeg_fps);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "mjpeg", "bitrate", 32, INT_MAX, &app_config.mjpeg_bitrate);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        parse_int(&ini, "mjpeg", "qfactor", 0, 99, &app_config.mjpeg_qfactor);
+    /* Parse even when disabled so configured values survive; fatal only if enabled. */
+    {
+        const char *possible_values[] = {"CBR", "VBR", "QP"};
+        const int count = sizeof(possible_values) / sizeof(const char *);
+        int val = 0;
+        parse_enum(&ini, "mjpeg", "mode", (void *)&val,
+            possible_values, count, 0);
+        app_config.mjpeg_mode = val;
     }
+    err = parse_int(&ini, "mjpeg", "width", 160, INT_MAX, &app_config.mjpeg_width);
+    if (err != CONFIG_OK && app_config.mjpeg_enable)
+        goto RET_ERR;
+    err = parse_int(&ini, "mjpeg", "height", 120, INT_MAX, &app_config.mjpeg_height);
+    if (err != CONFIG_OK && app_config.mjpeg_enable)
+        goto RET_ERR;
+    err = parse_int(&ini, "mjpeg", "fps", 1, INT_MAX, &app_config.mjpeg_fps);
+    if (err != CONFIG_OK && app_config.mjpeg_enable)
+        goto RET_ERR;
+    err = parse_int(&ini, "mjpeg", "bitrate", 32, INT_MAX, &app_config.mjpeg_bitrate);
+    if (err != CONFIG_OK && app_config.mjpeg_enable)
+        goto RET_ERR;
+    parse_int(&ini, "mjpeg", "qfactor", 0, 99, &app_config.mjpeg_qfactor);
 
     parse_bool(&ini, "http_post", "enable", &app_config.http_post_enable);
     if (app_config.http_post_enable) {
