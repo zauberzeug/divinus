@@ -183,6 +183,16 @@
 			req.send();
 		}
 
+		/* Toggle a stream on/off live, sending only enable= — leaves its other
+		   params untouched on the device (the server applies only the keys sent). */
+		function apiEnable(endp) {
+			var sel = document.getElementById(endp + '_enable');
+			if (!sel) return;
+			var req = new XMLHttpRequest();
+			req.open('GET', '/api/' + endp + '?enable=' + encodeURIComponent(sel.value));
+			req.send();
+		}
+
 		function readExposure() {
 			var req = new XMLHttpRequest();
 			req.onreadystatechange = function() {
@@ -656,7 +666,7 @@
 						<table class="w-100">
 							<tr>
 								<td><label for="jpeg_enable">Enabled</label></td>
-								<td><select id="jpeg_enable">
+								<td><select id="jpeg_enable" onchange="apiEnable('jpeg')">
 									<option value="false">OFF</option>
 									<option value="true">ON</option>
 								</select></td>
@@ -685,7 +695,7 @@
 						<table class="w-100">
 							<tr>
 								<td><label for="mp4_enable">Enabled</label></td>
-								<td><select id="mp4_enable">
+								<td><select id="mp4_enable" onchange="apiEnable('mp4')">
 									<option value="false">OFF</option>
 									<option value="true">ON</option>
 								</select></td>
@@ -745,7 +755,7 @@
 						<table class="w-100">
 							<tr>
 								<td><label for="mjpeg_enable">Enabled</label></td>
-								<td><select id="mjpeg_enable">
+								<td><select id="mjpeg_enable" onchange="apiEnable('mjpeg')">
 									<option value="false">OFF</option>
 									<option value="true">ON</option>
 								</select></td>
