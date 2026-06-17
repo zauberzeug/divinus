@@ -21,4 +21,4 @@ build = "sh build.sh"          # e.g. pixi run build star6e
 test = "make -C tests CC=gcc"
 analyze = "sh tests/analyze.sh"
 lint-api = "uv run --script tools/openapi_lint.py"   # validate doc/openapi.yaml (CI gate)
-docs-api = "uv run --script tools/build_docs.py"     # generate the interactive doc/api.html
+generate-api-docs = "uv run --script tools/build_docs.py"     # generate the interactive doc/api.html

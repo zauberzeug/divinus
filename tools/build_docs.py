@@ -9,7 +9,7 @@ Reads ``doc/openapi.yaml`` and embeds it into ``doc/api.html`` next to the
 Scalar API reference loaded from a CDN, so the result opens by double-clicking -
 no local web server and no Node toolchain required.
 
-Invoked through ``pixi run docs-api``. The generated ``doc/api.html`` is
+Invoked through ``pixi run generate-api-docs``. The generated ``doc/api.html`` is
 git-ignored (regenerate on demand); ``doc/openapi.yaml`` stays the single
 source of truth.
 """

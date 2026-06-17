@@ -3,7 +3,7 @@
 This document describes the REST API endpoints available in Divinus' web server.
 
 > A machine-readable [OpenAPI 3.1 spec](openapi.yaml) is the authoritative
-> definition of this API (run `pixi run docs-api` for an interactive view). See
+> definition of this API (run `pixi run generate-api-docs` for an interactive view). See
 > the [documentation index](README.md) for tooling.
 
 ## General Response Format

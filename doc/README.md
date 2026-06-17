@@ -20,7 +20,7 @@ to the locked pixi environment.
 
 ```sh
 pixi run lint-api   # validate openapi.yaml (OpenAPI 3.1 + house style); runs in CI
-pixi run docs-api   # generate a self-contained interactive doc/api.html
+pixi run generate-api-docs   # generate a self-contained interactive doc/api.html
 ```
 
 `pixi run lint-api` is enforced in the **Test** workflow, so a malformed or
@@ -28,7 +28,7 @@ incomplete spec fails CI.
 
 ### Interactive docs
 
-`pixi run docs-api` renders `openapi.yaml` into a single, self-contained
+`pixi run generate-api-docs` renders `openapi.yaml` into a single, self-contained
 `doc/api.html` (git-ignored) using the [Scalar](https://github.com/scalar/scalar)
 API reference. It opens directly in a browser — no server, no Node toolchain.
 
