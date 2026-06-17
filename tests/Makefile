@@ -40,6 +40,7 @@ test_stream_rtp_SRC := $(SRCDIR)/stream.c $(SRCDIR)/fmt/rtppkt.c $(SRCDIR)/hal/t
 test_rtp_split_SRC := $(SRCDIR)/fmt/rtppkt.c
 test_rtppkt_SRC := $(SRCDIR)/fmt/rtppkt.c
 test_frc_SRC := $(SRCDIR)/hal/frc.c
+test_sensor_mode_SRC := $(SRCDIR)/hal/sensor_mode.c
 test_captime_SRC := $(SRCDIR)/hal/captime.c
 test_rtcp_sr_SRC := $(SRCDIR)/hal/captime.c
 test_gain_SRC := $(SRCDIR)/gain.c
