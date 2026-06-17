@@ -8,3 +8,4 @@ divinus
 /.pixi
 /tests/unit/test_*
 !/tests/unit/test_*.*
+/doc/api.html

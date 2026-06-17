@@ -1,0 +1,915 @@
+openapi: 3.1.0
+
+info:
+  title: Divinus Camera API
+  version: 0.0.0   # unversioned; tracks the master build (CI may stamp the git describe)
+  license:
+    name: MIT
+    identifier: MIT
+  description: |
+    HTTP control and streaming API exposed by the Divinus web server.
+
+    **Convention.** Every `/api/<name>` endpoint is a single `GET`. Called with
+    no query parameters it *reads* the current state; called with parameters it
+    *writes* them and returns the resulting state. Numeric values that fall out
+    of range are silently ignored (the stored value is left unchanged), so the
+    response is the source of truth for what was actually applied. Booleans
+    accept `true`/`false` (case-insensitive) or `1`/`0`. Changes are applied
+    live but only persisted across reboots after `GET /api/cmd?save`.
+
+    **Out of scope.** The device also speaks RTSP (default port 554) and, when
+    enabled, ONVIF (SOAP/XML under `/onvif`). Those are separate protocols and
+    are not described here.
+
+servers:
+  - url: http://{host}
+    description: A Divinus camera on the LAN.
+    variables:
+      host:
+        default: 192.168.1.221
+        description: Camera IP address or mDNS hostname (default web port 80).
+
+security:
+  - {}                # auth is off by default
+  - basicAuth: []     # enforced only when `system.web_enable_auth` is true
+
+tags:
+  - name: System
+    description: Status, time and lifecycle commands.
+  - name: Video
+    description: JPEG, MJPEG and H.26x/MP4 encoder configuration.
+  - name: ISP
+    description: Image sensor / image-signal-processor controls.
+  - name: Audio
+    description: Audio encoder configuration.
+  - name: Night Mode
+    description: IR-cut filter, IR LEDs and day/night switching.
+  - name: OSD
+    description: On-screen text and image overlays.
+  - name: Recording
+    description: On-device video recording.
+  - name: Streaming
+    description: Raw RTP/UDP and RTMP push streaming.
+  - name: Content
+    description: Live media and snapshot endpoints.
+
+paths:
+  /api/cmd:
+    get:
+      tags: [System]
+      operationId: cmd
+      summary: Run an integrated command (save or restart)
+      parameters:
+        - name: save
+          in: query
+          description: Persist the current configuration to disk. Presence triggers the action; any value is ignored.
+          required: false
+          allowEmptyValue: true
+          schema: {type: boolean}
+        - name: restart
+          in: query
+          description: Restart the service (sends SIGHUP to the process). Presence triggers the action; any value is ignored.
+          required: false
+          allowEmptyValue: true
+          schema: {type: boolean}
+      responses:
+        '200':
+          description: Result code — 0 on success, a non-zero error code on failure, -1 if no command was given.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CmdResult'}
+
+  /api/status:
+    get:
+      tags: [System]
+      operationId: status
+      summary: Read live system status
+      responses:
+        '200':
+          description: Chip, sensor, load average, memory, temperature and uptime.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Status'}
+
+  /api/time:
+    get:
+      tags: [System]
+      operationId: time
+      summary: Read or set the real-time clock and display format
+      parameters:
+        - name: fmt
+          in: query
+          description: strftime() format string used by dynamic OSD specifiers. Omit to read the current value.
+          required: false
+          schema: {type: string, example: '%Y-%m-%d %H:%M:%S'}
+        - name: ts
+          in: query
+          description: Unix timestamp in seconds (local timezone) to set the wall clock to. Omit to read.
+          required: false
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: Current time format and Unix timestamp.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Time'}
+
+  /api/jpeg:
+    get:
+      tags: [Video]
+      operationId: jpeg
+      summary: Read or set JPEG capture parameters
+      parameters:
+        - name: width
+          in: query
+          description: Image width in pixels.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: height
+          in: query
+          description: Image height in pixels.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: qfactor
+          in: query
+          description: JPEG quality factor (1–100%).
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100}
+      responses:
+        '200':
+          description: Current JPEG capture configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JpegConfig'}
+
+  /api/mjpeg:
+    get:
+      tags: [Video]
+      operationId: mjpeg
+      summary: Read or set the MJPEG stream configuration
+      parameters:
+        - name: enable
+          in: query
+          description: Enable or disable the MJPEG stream.
+          required: false
+          schema: {type: boolean}
+        - name: width
+          in: query
+          description: Video width in pixels.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: height
+          in: query
+          description: Video height in pixels.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: fps
+          in: query
+          description: Frames per second.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: bitrate
+          in: query
+          description: Target bitrate in kbps.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: qfactor
+          in: query
+          description: JPEG quality factor; 0 inherits the JPEG section's qfactor.
+          required: false
+          schema: {type: integer, minimum: 0, maximum: 100}
+        - name: mode
+          in: query
+          description: Rate-control mode (case-insensitive).
+          required: false
+          schema: {type: string, enum: [CBR, VBR, QP]}
+      responses:
+        '200':
+          description: Current MJPEG stream configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MjpegConfig'}
+
+  /api/mp4:
+    get:
+      tags: [Video]
+      operationId: mp4
+      summary: Read or set the H.26x / MP4 stream configuration
+      parameters:
+        - name: enable
+          in: query
+          description: Enable or disable the MP4 stream (required by RTSP and the live MP4 stream).
+          required: false
+          schema: {type: boolean}
+        - name: width
+          in: query
+          description: Video width in pixels.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: height
+          in: query
+          description: Video height in pixels.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: fps
+          in: query
+          description: Frames per second.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: gop
+          in: query
+          description: Keyframe interval (GOP length); applied only when ≥ 1.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: bitrate
+          in: query
+          description: Target bitrate in kbps.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: h265
+          in: query
+          description: Use H.265 instead of H.264.
+          required: false
+          schema: {type: boolean}
+        - name: mode
+          in: query
+          description: Rate-control mode (case-insensitive).
+          required: false
+          schema: {type: string, enum: [CBR, VBR, QP, ABR, AVBR]}
+        - name: profile
+          in: query
+          description: Encoding profile (case-insensitive); long forms BASELINE/MAIN/HIGH are also accepted.
+          required: false
+          schema: {type: string, enum: [BP, MP, HP]}
+      responses:
+        '200':
+          description: Current MP4 stream configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Mp4Config'}
+
+  /api/isp:
+    get:
+      tags: [ISP]
+      operationId: isp
+      summary: Read or set image-signal-processor settings
+      parameters:
+        - name: mirror
+          in: query
+          description: Mirror the image horizontally.
+          required: false
+          schema: {type: boolean}
+        - name: flip
+          in: query
+          description: Flip the image vertically.
+          required: false
+          schema: {type: boolean}
+        - name: antiflicker
+          in: query
+          description: Anti-flicker frequency in Hz (e.g. 50 or 60; 0 disables).
+          required: false
+          schema: {type: integer, minimum: 0}
+        - name: level3dnr
+          in: query
+          description: 3D noise-reduction level; applied only when in range 0–7 (SigmaStar infinity6/6c/6e and Mercury6 only).
+          required: false
+          schema: {type: integer, minimum: 0, maximum: 7}
+      responses:
+        '200':
+          description: Current ISP settings.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/IspConfig'}
+
+  /api/exposure:
+    get:
+      tags: [ISP]
+      operationId: exposure
+      summary: Read or set the sensor exposure (shutter) time
+      parameters:
+        - name: value
+          in: query
+          description: >-
+            Fixed shutter time in microseconds (clamped to 1000000 µs), `0` to
+            restore auto exposure, or the literal `max` for the longest exposure
+            the sensor allows. The alias `exposure` is also accepted. Omit to read.
+          required: false
+          schema:
+            oneOf:
+              - {type: integer, minimum: 0, maximum: 1000000}
+              - {type: string, enum: [max]}
+      responses:
+        '200':
+          description: Effective exposure time and mode after any clamping.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Exposure'}
+
+  /api/gain:
+    get:
+      tags: [ISP]
+      operationId: gain
+      summary: Read or set auto-exposure gain limits
+      parameters:
+        - name: min_gain
+          in: query
+          description: Minimum total gain limit; applied only when > 0 and the driver accepts it.
+          required: false
+          schema: {type: integer, minimum: 0}
+        - name: max_gain
+          in: query
+          description: Maximum total gain limit; applied only when > 0 and the driver accepts it.
+          required: false
+          schema: {type: integer, minimum: 0}
+        - name: min_isp_gain
+          in: query
+          description: Minimum ISP-gain limit; applied only when > 0 and the driver accepts it.
+          required: false
+          schema: {type: integer, minimum: 0}
+        - name: max_isp_gain
+          in: query
+          description: Maximum ISP-gain limit; applied only when > 0 and the driver accepts it.
+          required: false
+          schema: {type: integer, minimum: 0}
+      responses:
+        '200':
+          description: Current gain limits plus live auto-exposure state. Fields are null when the driver read fails.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Gain'}
+
+  /api/audio:
+    get:
+      tags: [Audio]
+      operationId: audio
+      summary: Read or set audio parameters
+      parameters:
+        - name: enable
+          in: query
+          description: Enable or disable audio.
+          required: false
+          schema: {type: boolean}
+        - name: bitrate
+          in: query
+          description: Audio bitrate in kbps.
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: gain
+          in: query
+          description: Audio gain (dB amplification).
+          required: false
+          schema: {type: integer}
+        - name: srate
+          in: query
+          description: Sample rate in Hz.
+          required: false
+          schema: {type: integer, minimum: 1}
+      responses:
+        '200':
+          description: Current audio configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AudioConfig'}
+
+  /api/night:
+    get:
+      tags: [Night Mode]
+      operationId: night
+      summary: Read or set night-mode parameters
+      parameters:
+        - name: enable
+          in: query
+          description: Enable or disable night-mode support.
+          required: false
+          schema: {type: boolean}
+        - name: manual
+          in: query
+          description: Switch between manual and automatic day/night control.
+          required: false
+          schema: {type: boolean}
+        - name: grayscale
+          in: query
+          description: Force grayscale output.
+          required: false
+          schema: {type: boolean}
+        - name: ircut
+          in: query
+          description: Engage or release the IR-cut filter.
+          required: false
+          schema: {type: boolean}
+        - name: ircut_pin1
+          in: query
+          description: GPIO number for the IR-cut filter (normal-state pin).
+          required: false
+          schema: {type: integer}
+        - name: ircut_pin2
+          in: query
+          description: GPIO number for the IR-cut filter (inverted-state pin).
+          required: false
+          schema: {type: integer}
+        - name: irled
+          in: query
+          description: Turn the IR LEDs on or off.
+          required: false
+          schema: {type: boolean}
+        - name: irled_pin
+          in: query
+          description: GPIO number for the IR LED control.
+          required: false
+          schema: {type: integer}
+        - name: irsense_pin
+          in: query
+          description: GPIO number for the IR / motion sensor input.
+          required: false
+          schema: {type: integer}
+        - name: adc_device
+          in: query
+          description: Path to the ADC device used for ambient-light sensing.
+          required: false
+          schema: {type: string}
+        - name: adc_threshold
+          in: query
+          description: Raw ADC threshold that triggers night mode.
+          required: false
+          schema: {type: integer}
+      responses:
+        '200':
+          description: Current night-mode state and pin configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NightConfig'}
+
+  /api/osd/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Overlay region index (0–9).
+        schema: {type: integer, minimum: 0, maximum: 9}
+    get:
+      tags: [OSD]
+      operationId: osd
+      summary: Read or set a text/image overlay region
+      parameters:
+        - name: text
+          in: query
+          description: Text to display; supports the dynamic specifiers documented in overlays.md.
+          required: false
+          schema: {type: string}
+        - name: img
+          in: query
+          description: Local image path to display (mutually exclusive with text).
+          required: false
+          schema: {type: string}
+        - name: font
+          in: query
+          description: Font name.
+          required: false
+          schema: {type: string}
+        - name: size
+          in: query
+          description: Font size in points.
+          required: false
+          schema: {type: number}
+        - name: color
+          in: query
+          description: Fill color in hex RGB555 (e.g. "#ffff").
+          required: false
+          schema: {type: string}
+        - name: opal
+          in: query
+          description: Opacity level (0–255).
+          required: false
+          schema: {type: integer, minimum: 0, maximum: 255}
+        - name: pos
+          in: query
+          description: Position as a comma-separated "x,y" pair on the main stream.
+          required: false
+          schema: {type: string, example: '16,64'}
+        - name: posx
+          in: query
+          description: X coordinate (write-only).
+          required: false
+          schema: {type: integer}
+        - name: posy
+          in: query
+          description: Y coordinate (write-only).
+          required: false
+          schema: {type: integer}
+        - name: outl
+          in: query
+          description: Outline color in hex RGB555.
+          required: false
+          schema: {type: string}
+        - name: thick
+          in: query
+          description: Outline thickness (0 disables the outline).
+          required: false
+          schema: {type: number}
+      responses:
+        '200':
+          description: Current overlay-region configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OsdConfig'}
+        '404':
+          description: Region id is out of range.
+    post:
+      tags: [OSD]
+      operationId: osdUpload
+      summary: Upload a bitmap or PNG overlay image
+      requestBody:
+        description: Bitmap or PNG image; replaces any text in the region.
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: BMP or PNG image data.
+      responses:
+        '200':
+          description: Updated overlay-region configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OsdConfig'}
+        '404':
+          description: Region id is out of range.
+        '415':
+          description: Request body was not multipart/form-data.
+
+  /api/record:
+    get:
+      tags: [Recording]
+      operationId: record
+      summary: Read recording state or start/stop a recording
+      parameters:
+        - name: enable
+          in: query
+          description: Allow or block recording operations.
+          required: false
+          schema: {type: boolean}
+        - name: continuous
+          in: query
+          description: Run recording continuously (uninterruptible) instead of on demand.
+          required: false
+          schema: {type: boolean}
+        - name: path
+          in: query
+          description: Directory for the resulting files.
+          required: false
+          schema: {type: string}
+        - name: filename
+          in: query
+          description: Output file name (extension required); empty enables incremental numbering.
+          required: false
+          schema: {type: string}
+        - name: segment_duration
+          in: query
+          description: Maximum segment duration in seconds (0 disables).
+          required: false
+          schema: {type: integer, minimum: 0}
+        - name: segment_size
+          in: query
+          description: Maximum segment size in bytes (0 disables).
+          required: false
+          schema: {type: integer, minimum: 0}
+        - name: start
+          in: query
+          description: Start a new recording session (ignored in continuous mode). Presence triggers the action.
+          required: false
+          allowEmptyValue: true
+          schema: {type: boolean}
+        - name: stop
+          in: query
+          description: Stop the current recording session (ignored in continuous mode). Presence triggers the action.
+          required: false
+          allowEmptyValue: true
+          schema: {type: boolean}
+      responses:
+        '200':
+          description: Current recording state and configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecordStatus'}
+
+  /api/stream:
+    get:
+      tags: [Streaming]
+      operationId: stream
+      summary: Read or control the raw RTP/UDP push stream
+      parameters:
+        - name: enable
+          in: query
+          description: Start (true/1) or stop (false/0) the push live.
+          required: false
+          schema: {type: boolean}
+        - name: dest
+          in: query
+          description: Primary destination "udp://host:port" (host may be a 224–239 multicast address). A malformed value is rejected and leaves the stored destination unchanged.
+          required: false
+          schema: {type: string, example: 'udp://192.168.1.50:5600'}
+        - name: udp_srcport
+          in: query
+          description: Local UDP source port (0 = default 5600).
+          required: false
+          schema: {type: integer, minimum: 0, maximum: 65535}
+      responses:
+        '200':
+          description: Current push-stream configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StreamConfig'}
+
+  /image.jpg:
+    get:
+      tags: [Content]
+      operationId: imageJpg
+      summary: Capture an instant JPEG snapshot
+      parameters:
+        - name: width
+          in: query
+          description: Snapshot width in pixels (defaults to the JPEG config).
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: height
+          in: query
+          description: Snapshot height in pixels (defaults to the JPEG config).
+          required: false
+          schema: {type: integer, minimum: 1}
+        - name: qfactor
+          in: query
+          description: JPEG quality factor (1–100%).
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100}
+        - name: color2gray
+          in: query
+          description: Convert the snapshot to grayscale (alias "gray").
+          required: false
+          schema: {type: boolean}
+      responses:
+        '200':
+          description: A single JPEG image.
+          content:
+            image/jpeg:
+              schema: {type: string, format: binary}
+        '503':
+          description: JPEG capture failed (encoder busy or unavailable).
+
+  /mjpeg:
+    get:
+      tags: [Content]
+      operationId: mjpegStream
+      summary: Continuous MJPEG stream
+      responses:
+        '200':
+          description: A multipart/x-mixed-replace stream of JPEG frames. Requires the MJPEG encoder to be enabled.
+          content:
+            multipart/x-mixed-replace:
+              schema: {type: string, format: binary}
+
+  /video.mp4:
+    get:
+      tags: [Content]
+      operationId: mp4Stream
+      summary: Continuous fragmented-MP4 stream
+      responses:
+        '200':
+          description: A segmented fMP4 (moof/mdat) stream. Requires the MP4 encoder to be enabled.
+          content:
+            video/mp4:
+              schema: {type: string, format: binary}
+
+  /video.264:
+    get:
+      tags: [Content]
+      operationId: h264Stream
+      summary: Raw H.264 elementary stream
+      responses:
+        '200':
+          description: Raw H.264 Annex B bitstream. Served when the encoder is configured for H.264.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+
+  /video.265:
+    get:
+      tags: [Content]
+      operationId: h265Stream
+      summary: Raw H.265 elementary stream
+      responses:
+        '200':
+          description: Raw H.265 Annex B bitstream. Served when the encoder is configured for H.265.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+
+  /audio.mp3:
+    get:
+      tags: [Content]
+      operationId: mp3Stream
+      summary: Continuous MP3 audio stream
+      responses:
+        '200':
+          description: A chunked MP3 audio stream. Requires audio to be enabled.
+          content:
+            audio/mpeg:
+              schema: {type: string, format: binary}
+
+  /audio.pcm:
+    get:
+      tags: [Content]
+      operationId: pcmStream
+      summary: Continuous raw PCM audio stream
+      responses:
+        '200':
+          description: A chunked uncompressed PCM audio stream. Requires audio to be enabled.
+          content:
+            audio/pcm:
+              schema: {type: string, format: binary}
+
+  /:
+    get:
+      tags: [Content]
+      operationId: index
+      summary: WebUI homepage
+      responses:
+        '200':
+          description: The embedded single-page WebUI (also served at /index.htm and /index.html).
+          content:
+            text/html:
+              schema: {type: string}
+
+  /exit:
+    get:
+      tags: [System]
+      operationId: exit
+      summary: Gracefully stop the server
+      responses:
+        '200':
+          description: Shutdown acknowledgement ("Closing...").
+          content:
+            text/plain:
+              schema: {type: string}
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic auth, enforced only when `system.web_enable_auth` is true.
+
+  schemas:
+    CmdResult:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: 0 on success, non-zero error code on failure, -1 if no command was given.
+      required: [code]
+
+    Status:
+      type: object
+      properties:
+        chip: {type: string, description: SoC model reported by the HAL.}
+        loadavg:
+          type: array
+          description: 1-, 5- and 15-minute load averages.
+          items: {type: number}
+          minItems: 3
+          maxItems: 3
+        memory: {type: string, description: 'Used/total memory, e.g. "62/121MB".'}
+        sensor: {type: string, description: Image sensor model reported by the HAL.}
+        temp: {type: string, description: 'SoC temperature, e.g. "38.5°C" (when available).'}
+        uptime: {type: string, description: 'Process uptime, e.g. "7 days, 14:08:57".'}
+
+    Time:
+      type: object
+      properties:
+        fmt: {type: string, description: Current strftime() display format.}
+        ts: {type: integer, format: int64, description: Current Unix timestamp in seconds.}
+
+    JpegConfig:
+      type: object
+      properties:
+        enable: {type: boolean, description: Whether JPEG capture is enabled.}
+        width: {type: integer, description: Image width in pixels.}
+        height: {type: integer, description: Image height in pixels.}
+        qfactor: {type: integer, description: JPEG quality factor (1–100%).}
+
+    MjpegConfig:
+      type: object
+      properties:
+        enable: {type: boolean, description: Whether the MJPEG stream is enabled.}
+        width: {type: integer, description: Video width in pixels.}
+        height: {type: integer, description: Video height in pixels.}
+        fps: {type: integer, description: Frames per second.}
+        mode: {type: string, enum: [CBR, VBR, QP], description: Rate-control mode.}
+        bitrate: {type: integer, description: Target bitrate in kbps.}
+        qfactor: {type: integer, description: JPEG quality factor; 0 inherits the JPEG section.}
+
+    Mp4Config:
+      type: object
+      properties:
+        enable: {type: boolean, description: Whether the MP4 stream is enabled.}
+        width: {type: integer, description: Video width in pixels.}
+        height: {type: integer, description: Video height in pixels.}
+        fps: {type: integer, description: Frames per second.}
+        gop: {type: integer, description: Keyframe interval (GOP length).}
+        h265: {type: boolean, description: True when encoding H.265, false for H.264.}
+        mode: {type: string, enum: [CBR, VBR, QP, ABR, AVBR], description: Rate-control mode.}
+        profile: {type: string, enum: [BP, MP, HP], description: Encoding profile.}
+        bitrate: {type: integer, description: Target bitrate in kbps.}
+
+    IspConfig:
+      type: object
+      properties:
+        mirror: {type: boolean, description: Horizontal mirroring.}
+        flip: {type: boolean, description: Vertical flipping.}
+        antiflicker: {type: integer, description: Anti-flicker frequency in Hz.}
+        level3dnr: {type: integer, description: 3D noise-reduction level (0–7).}
+
+    Exposure:
+      type: object
+      properties:
+        exposure: {type: integer, description: Effective shutter time in microseconds.}
+        mode: {type: string, enum: [auto, fixed, max], description: Active exposure policy.}
+
+    Gain:
+      type: object
+      description: Gain limits and live auto-exposure readback; fields are null when the driver read fails.
+      properties:
+        min_gain: {type: [integer, 'null'], description: Minimum total gain limit.}
+        max_gain: {type: [integer, 'null'], description: Maximum total gain limit.}
+        min_isp_gain: {type: [integer, 'null'], description: Minimum ISP-gain limit.}
+        max_isp_gain: {type: [integer, 'null'], description: Maximum ISP-gain limit.}
+        shutter_us: {type: [integer, 'null'], description: Live shutter time in microseconds.}
+        sensor_gain: {type: [integer, 'null'], description: 'Live sensor gain (SigmaStar: 1024 == 1x).'}
+        isp_gain: {type: [integer, 'null'], description: Live ISP gain.}
+
+    AudioConfig:
+      type: object
+      properties:
+        enable: {type: boolean, description: Whether audio is enabled.}
+        bitrate: {type: integer, description: Audio bitrate in kbps.}
+        gain: {type: integer, description: Audio gain in dB.}
+        srate: {type: integer, description: Sample rate in Hz.}
+
+    NightConfig:
+      type: object
+      properties:
+        active: {type: boolean, description: Whether night-mode support is enabled.}
+        manual: {type: boolean, description: Whether manual control is active.}
+        grayscale: {type: boolean, description: Whether grayscale output is active.}
+        ircut: {type: boolean, description: Whether the IR-cut filter is engaged.}
+        ircut_pin1: {type: integer, description: GPIO for the IR-cut filter (normal pin).}
+        ircut_pin2: {type: integer, description: GPIO for the IR-cut filter (inverted pin).}
+        irled: {type: boolean, description: Whether the IR LEDs are on.}
+        irled_pin: {type: integer, description: GPIO for the IR LED control.}
+        irsense_pin: {type: integer, description: GPIO for the IR / motion sensor input.}
+        adc_device: {type: string, description: Path to the ADC device.}
+        adc_threshold: {type: integer, description: Raw ADC threshold that triggers night mode.}
+
+    OsdConfig:
+      type: object
+      properties:
+        id: {type: integer, description: Overlay region index.}
+        color: {type: string, description: Fill color in hex RGB555.}
+        opal: {type: integer, description: Opacity level (0–255).}
+        pos:
+          type: array
+          description: Position [x, y] on the main stream.
+          items: {type: integer}
+          minItems: 2
+          maxItems: 2
+        font: {type: string, description: Font name.}
+        size: {type: number, description: Font size in points.}
+        text: {type: string, description: Displayed text.}
+        img: {type: string, description: Local image path, when an image overlay is used.}
+        outl: {type: string, description: Outline color in hex RGB555.}
+        thick: {type: number, description: Outline thickness.}
+
+    RecordStatus:
+      type: object
+      properties:
+        recording: {type: boolean, description: Whether a recording is currently running.}
+        start_time: {type: string, description: 'ISO 8601 start time, e.g. "2025-05-08T14:30:00Z".'}
+        continuous: {type: boolean, description: Whether continuous recording is configured.}
+        path: {type: string, description: Output directory.}
+        filename: {type: string, description: Output file name.}
+        segment_duration: {type: integer, description: Maximum segment duration in seconds.}
+        segment_size: {type: integer, description: Maximum segment size in bytes.}
+
+    StreamConfig:
+      type: object
+      properties:
+        enable: {type: boolean, description: Whether the push stream is live.}
+        udp_srcport: {type: integer, description: Local UDP source port.}
+        dest: {type: string, description: Primary destination URL.}
+        dests:
+          type: array
+          description: All configured destination URLs.
+          items: {type: string}
