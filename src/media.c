@@ -3,6 +3,7 @@
 #include "gain.h"
 #include "stream_cfg.h"
 #include "hal/captime.h"
+#include "hal/sensor_mode.h"
 
 char audioOn = 0, udpOn = 0;
 pthread_mutex_t aencMtx, chnMtx, mp4Mtx;
@@ -984,6 +985,20 @@ int sdk_start(void) {
             case HAL_PLATFORM_T31: t31_config_load(app_config.sensor_config); break;
 #endif
         }
+
+#if defined(__ARM_PCS_VFP)
+    // Once the SigmaStar pipeline is streaming, log the sensor's advertised
+    // resolution modes from /proc. (Reading the node mid-bring-up disturbs the
+    // sensor, and the vendor fnGetResolution call can't walk the table; see
+    // hal/sensor_mode.c.)
+    if (plat == HAL_PLATFORM_I6 || plat == HAL_PLATFORM_I6C ||
+        plat == HAL_PLATFORM_M6) {
+        sensor_mode modes[SENSOR_MODE_MAX];
+        int listed = sensor_mode_read(0, modes, SENSOR_MODE_MAX);
+        if (listed > 0)
+            sensor_mode_log("sensor", modes, listed);
+    }
+#endif
 
     /* Apply the exposure policy for the configured frame rate, including the
        auto default so its shutter ceiling is tied to the frame budget. */
