@@ -28,6 +28,11 @@ char _i6_snr_framerate, _i6_snr_hdr, _i6_snr_index, _i6_snr_profile;
 static char _i6_chn_fps[I6_VENC_CHN_NUM];
 static frc_pacer _i6_chn_pace[I6_VENC_CHN_NUM];
 
+/* Set when a H26x channel accepted ring-buffer encoder input, so its bind
+   uses the RING link instead of FRAMEBASE. Cleared on any SDK rejection so we
+   fall back to whole-frame handoff and never brick startup. */
+static char _i6_chn_ring[I6_VENC_CHN_NUM];
+
 char _i6_aud_chn = 0;
 char _i6_aud_dev = 0;
 char _i6_isp_chn = 0;
@@ -173,8 +178,17 @@ int i6_channel_bind(char index, char framerate)
             .device = device, .channel = index, .port = _i6_venc_port };
         if (ret = i6_sys.fnSetOutputDepth(&source, 0, 2))
             return ret;
-        if (ret = i6_sys.fnBindExt(&source, &dest, framerate, framerate,
-            I6_SYS_LINK_FRAMEBASE, 0))
+        /* Ring-buffer input lets VENC encode lines while VPE is still writing
+           them; fall back to whole-frame handoff if the chip rejects the RING
+           link so a failing SDK never bricks startup. */
+        if (_i6_chn_ring[index] && i6_sys.fnBindExt(&source, &dest, framerate,
+            framerate, I6_SYS_LINK_RING, 0)) {
+            HAL_WARNING("i6_venc", "Channel %d rejected ring-buffer input, "
+                "falling back to whole-frame handoff\n", index);
+            _i6_chn_ring[index] = 0;
+        }
+        if (!_i6_chn_ring[index] && (ret = i6_sys.fnBindExt(&source, &dest,
+            framerate, framerate, I6_SYS_LINK_FRAMEBASE, 0)))
             return ret;
         _i6_chn_fps[index] = framerate;
         _i6_chn_pace[index] = (frc_pacer){0};
@@ -728,6 +742,21 @@ int i6_video_create(char index, hal_vidconfig *config)
 attach:
     if (ret = i6_venc.fnCreateChannel(index, &channel))
         return ret;
+
+    /* Opt H26x channels into ring-buffer encoder input so the bind can use the
+       RING link. MJPEG stays whole-frame. fnSetSourceConfig is loaded without a
+       NULL guard, so check it here; any rejection leaves the channel on the
+       FRAMEBASE path. */
+    _i6_chn_ring[index] = 0;
+    if (config->lowDelay && config->codec != HAL_VIDCODEC_JPG &&
+        config->codec != HAL_VIDCODEC_MJPG && i6_venc.fnSetSourceConfig) {
+        i6_venc_src_conf src = I6_VENC_SRC_CONF_RING_HALF;
+        if (i6_venc.fnSetSourceConfig(index, &src))
+            HAL_WARNING("i6_venc", "Channel %d rejected ring-buffer input "
+                "config, keeping whole-frame handoff\n", index);
+        else
+            _i6_chn_ring[index] = 1;
+    }
 
     if (config->codec != HAL_VIDCODEC_JPG &&
         (ret = i6_venc.fnStartReceiving(index)))

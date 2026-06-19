@@ -164,6 +164,7 @@ int app_config_save(void) {
     fprintf(file, "  gop: %d\n", app_config.mp4_gop);
     fprintf(file, "  profile: %d\n", app_config.mp4_profile);
     fprintf(file, "  bitrate: %d\n", app_config.mp4_bitrate);
+    fprintf(file, "  low_delay: %s\n", app_config.mp4_low_delay ? "true" : "false");
 
     fprintf(file, "osd:\n");
     fprintf(file, "  enable: %s\n", app_config.osd_enable ? "true" : "false");
@@ -283,6 +284,7 @@ enum ConfigError app_config_parse(void) {
     app_config.mp4_fps = 30;
     app_config.mp4_gop = 30;
     app_config.mp4_bitrate = 1024;
+    app_config.mp4_low_delay = false;
 
     app_config.mjpeg_enable = false;
     app_config.mjpeg_fps = 15;
@@ -549,6 +551,7 @@ enum ConfigError app_config_parse(void) {
     err = parse_int(&ini, "mp4", "bitrate", 32, INT_MAX, &app_config.mp4_bitrate);
     if (err != CONFIG_OK && app_config.mp4_enable)
         goto RET_ERR;
+    parse_bool(&ini, "mp4", "low_delay", &app_config.mp4_low_delay);
 
     err = parse_bool(&ini, "jpeg", "enable", &app_config.jpeg_enable);
     if (err != CONFIG_OK)

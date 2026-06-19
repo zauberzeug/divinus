@@ -35,6 +35,7 @@ int jpeg_init() {
         config.codec = HAL_VIDCODEC_JPG;
         config.mode = HAL_VIDMODE_QP;
         config.minQual = config.maxQual = app_config.jpeg_qfactor;
+        config.lowDelay = false;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)

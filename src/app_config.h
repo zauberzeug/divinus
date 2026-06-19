@@ -98,6 +98,7 @@ struct AppConfig {
     unsigned int mp4_height;
     unsigned int mp4_profile;
     unsigned int mp4_bitrate;
+    bool mp4_low_delay;
 
     // [jpeg]
     bool jpeg_enable;

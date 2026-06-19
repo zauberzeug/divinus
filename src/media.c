@@ -654,6 +654,7 @@ int media_mjpeg_enable(void) {
         config.maxBitrate = app_config.mjpeg_bitrate * 5 / 4;
         config.minQual = config.maxQual = app_config.mjpeg_qfactor ?
             app_config.mjpeg_qfactor : app_config.jpeg_qfactor;
+        config.lowDelay = false;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)
@@ -737,6 +738,7 @@ int media_mp4_enable(void) {
         config.maxBitrate = app_config.mp4_bitrate * 5 / 4;
         config.minQual = 34;
         config.maxQual = 48;
+        config.lowDelay = app_config.mp4_low_delay;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)

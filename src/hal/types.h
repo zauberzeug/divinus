@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "macros.h"
 
 typedef enum {
@@ -96,6 +98,7 @@ typedef struct {
     hal_vidprofile profile;
     unsigned char gop, framerate, minQual, maxQual;
     unsigned short bitrate, maxBitrate;
+    bool lowDelay;
 } hal_vidconfig;
 
 /* AE gain limits, 1024 == 1x; zero in a set request means "leave unchanged" */
