@@ -435,7 +435,7 @@ void send_mjpeg_to_client(char index, char *buf, ssize_t size,
     }
     ssize_t prefix_size = snprintf(prefix_buf, sizeof(prefix_buf),
         "--boundarydonotcross\r\n"
-        "Content-Type:image/jpeg\r\n"
+        "Content-Type: image/jpeg\r\n"
         "Content-Length: %lu\r\n"
         "%s\r\n", size, ts_hdr);
     buf[size++] = '\r';
