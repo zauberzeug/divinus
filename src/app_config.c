@@ -80,7 +80,10 @@ int app_config_save(void) {
     fprintf(file, "  sensor_config: %s\n", app_config.sensor_config);
     fprintf(file, "  web_port: %d\n", app_config.web_port);
     if (!EMPTY(*app_config.web_whitelist)) {
-        fprintf(file, "  web_whitelist: ");
+        /* List fields: key on its own line, items below. parse_list anchors each
+           entry to a leading newline, so an entry sharing the key's line is
+           dropped on the next load (mirrors stream_config_write). */
+        fprintf(file, "  web_whitelist:\n");
         for (int i = 0; app_config.web_whitelist[i] && *app_config.web_whitelist[i]; i++) {
             fprintf(file, "    - %s\n", app_config.web_whitelist[i]);
         }
