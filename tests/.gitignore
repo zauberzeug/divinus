@@ -1,2 +1,3 @@
 unit/test_*
 !unit/test_*.c
+integration/__pycache__/
