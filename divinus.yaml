@@ -11,6 +11,10 @@ system:
   web_server_thread_stack_size: 65536
   time_format: "%Y-%m-%d %H:%M:%S"
   watchdog: 30
+  # LAN NTP time source (host or IP). When set, divinus rewrites /etc/ntp.conf
+  # ("server <host> iburst") and restarts S49ntpd on boot and on /api/ntp change.
+  # Leave empty/unset to keep the firmware's stock /etc/ntp.conf untouched.
+  # ntp_server: 192.168.1.10
 
 isp:
   mirror: false

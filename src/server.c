@@ -1703,6 +1703,35 @@ void respond_request(http_request_t *req) {
         return;
     }
 
+    if (EQUALS(req->uri, "/api/ntp")) {
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                /* Reject before storing: the value lands verbatim in the
+                   root-owned /etc/ntp.conf, so an injected newline could add
+                   arbitrary ntpd directives. */
+                if (EQUALS(key, "server") && ntp_server_valid(value)) {
+                    strncpy(app_config.ntp_server, value,
+                        sizeof(app_config.ntp_server) - 1);
+                    app_config.ntp_server[sizeof(app_config.ntp_server) - 1] = '\0';
+                    ntp_apply();
+                }
+            }
+        }
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"server\":\"%s\"}", app_config.ntp_server);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
     if (app_config.web_enable_static && send_file(req->clntFd, req->uri))
         return;
 

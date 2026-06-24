@@ -436,6 +436,7 @@
 			toggleRecord(document.getElementById('record_state'));
 			apiRead('stream');
 			apiRead('time');
+			apiRead('ntp');
 
 			duplicateRows('osd', 10);
 			for (var i = 0; i < 10; i++)
@@ -955,6 +956,21 @@
 							</tr>
 						</table>
 						<a href="javascript:apiRead('time')" class="btn right">Refresh</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row scrollx">
+				<div class="12 col box">
+					<fieldset>
+						<legend>NTP</legend>
+						<table class="tc w-100">
+							<tr>
+								<td><label for="ntp_server">Time server (LAN host/IP)</label></td>
+								<td><input type="text" id="ntp_server" placeholder="leave empty to keep image default"></td>
+							</tr>
+						</table>
+						<a href="javascript:apiRead('ntp')" class="btn right">Refresh</a>
+						<a href="javascript:apiApply('ntp')" class="btn right mr1">Apply</a>
 					</fieldset>
 				</div>
 			</div>

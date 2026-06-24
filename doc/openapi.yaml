@@ -114,6 +114,29 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Time'}
 
+  /api/ntp:
+    get:
+      tags: [System]
+      operationId: ntp
+      summary: Read or set the LAN NTP time source
+      description: >-
+        Sets the NTP server the camera disciplines its clock to. On change the
+        server rewrites /etc/ntp.conf ("server <host> iburst") and restarts the
+        ntpd init script, so it takes effect without a reflash. An empty value
+        leaves the firmware's stock /etc/ntp.conf untouched.
+      parameters:
+        - name: server
+          in: query
+          description: NTP server host or IP (e.g. the LAN time authority). Omit to read the current value.
+          required: false
+          schema: {type: string, example: 192.168.1.10}
+      responses:
+        '200':
+          description: Current NTP time source.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ntp'}
+
   /api/jpeg:
     get:
       tags: [Video]
@@ -791,6 +814,11 @@ components:
       properties:
         fmt: {type: string, description: Current strftime() display format.}
         ts: {type: integer, format: int64, description: Current Unix timestamp in seconds.}
+
+    Ntp:
+      type: object
+      properties:
+        server: {type: string, description: Configured LAN NTP server (empty if unset).}
 
     JpegConfig:
       type: object
