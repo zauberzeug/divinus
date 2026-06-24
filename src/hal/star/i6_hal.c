@@ -604,7 +604,6 @@ int i6_video_create(char index, hal_vidconfig *config)
     int ret;
     i6_venc_chn channel;
     i6_venc_attr_h26x *attrib;
-
     memset(&channel, 0, sizeof(channel));
 
     if (config->codec == HAL_VIDCODEC_JPG || config->codec == HAL_VIDCODEC_MJPG) {
