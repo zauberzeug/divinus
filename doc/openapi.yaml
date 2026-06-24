@@ -137,6 +137,30 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Ntp'}
 
+  /api/sensor:
+    get:
+      tags: [System]
+      operationId: sensor
+      summary: Read the sensor mode table or set the forced mode
+      description: >-
+        Returns the sensor's enumerated resolution modes and the configured
+        profile. Setting profile selects which mode the sensor runs: -1 keeps
+        the first-fit picker (default), or a mode index forces that mode. A
+        forced request whose fps exceeds the mode's ceiling is capped. The
+        change takes effect on the next restart (save, then /api/cmd?restart).
+      parameters:
+        - name: profile
+          in: query
+          description: Sensor mode index to force, or -1 for auto (first-fit). Omit to read.
+          required: false
+          schema: {type: integer, minimum: -1, example: 3}
+      responses:
+        '200':
+          description: Configured profile and the enumerated mode table.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Sensor'}
+
   /api/jpeg:
     get:
       tags: [Video]
@@ -819,6 +843,23 @@ components:
       type: object
       properties:
         server: {type: string, description: Configured LAN NTP server (empty if unset).}
+
+    Sensor:
+      type: object
+      properties:
+        profile: {type: integer, description: 'Configured sensor mode: -1 = auto (first-fit), else a forced mode index.'}
+        modes:
+          type: array
+          description: Sensor's enumerated resolution modes (read from /proc once streaming).
+          items:
+            type: object
+            properties:
+              index: {type: integer, description: Mode index to pass as profile.}
+              desc: {type: string, description: 'Mode description, e.g. 1920x1080@120fps.'}
+              crop: {type: array, items: {type: integer}, description: '[width, height] of the sensor crop.'}
+              output: {type: array, items: {type: integer}, description: '[width, height] the mode outputs.'}
+              minFps: {type: integer, description: Minimum frame rate.}
+              maxFps: {type: integer, description: Maximum frame rate (the fps cap when forced).}
 
     JpegConfig:
       type: object

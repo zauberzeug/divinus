@@ -47,10 +47,87 @@ static void test_parse_proc_empty_on_garbage(void) {
                                   SENSOR_MODE_MAX) == 0);
 }
 
+/* Load the four-mode table from the sample dump for the selector tests. */
+static int load_modes(sensor_mode *m) {
+    int n = sensor_mode_parse_proc(PROC_SAMPLE, m, SENSOR_MODE_MAX);
+    assert(n == 4);
+    return n;
+}
+
+/* A negative profile keeps the legacy first-fit pick: the first mode whose
+   crop covers the request at >= the requested fps. */
+static void test_select_auto_first_fit(void) {
+    sensor_mode m[SENSOR_MODE_MAX];
+    int n = load_modes(m);
+    /* 2560x1920@60 needs crop >= 2560x1920 and >= 60fps -> index 1. */
+    sensor_mode_choice c = sensor_mode_select(-1, m, n, 2560, 1920, 60);
+    assert(c.index == 1 && c.fps == 60);
+    /* 1920x1080@120: modes 0-2 are <120fps or don't crop to it -> index 3. */
+    c = sensor_mode_select(-1, m, n, 1920, 1080, 120);
+    assert(c.index == 3 && c.fps == 120);
+    /* Default low-res 30fps request still lands on index 0 (no behaviour change). */
+    c = sensor_mode_select(-1, m, n, 1440, 1080, 30);
+    assert(c.index == 0 && c.fps == 30);
+}
+
+/* Auto mode returns -1 when no mode satisfies the request (today's failure). */
+static void test_select_auto_no_fit(void) {
+    sensor_mode m[SENSOR_MODE_MAX];
+    int n = load_modes(m);
+    sensor_mode_choice c = sensor_mode_select(-1, m, n, 2560, 1920, 200);
+    assert(c.index < 0);
+}
+
+/* A profile in range forces that mode regardless of crop/output fit. */
+static void test_select_forced_in_range(void) {
+    sensor_mode m[SENSOR_MODE_MAX];
+    int n = load_modes(m);
+    /* Force index 3 even though the request would first-fit to 0. */
+    sensor_mode_choice c = sensor_mode_select(3, m, n, 1440, 1080, 60);
+    assert(c.index == 3 && c.fps == 60);
+}
+
+/* Forcing a mode caps the fps to that mode's ceiling instead of crashing the
+   pipeline (fnSetFramerate over the ceiling returns 0xa01b201f). */
+static void test_select_forced_caps_fps(void) {
+    sensor_mode m[SENSOR_MODE_MAX];
+    int n = load_modes(m);
+    /* Mode 0 maxes at 30fps; a 60fps request is clamped down. */
+    sensor_mode_choice c = sensor_mode_select(0, m, n, 1440, 1080, 60);
+    assert(c.index == 0 && c.fps == 30);
+    /* Under the ceiling is left untouched. */
+    c = sensor_mode_select(2, m, n, 1440, 1080, 45);
+    assert(c.index == 2 && c.fps == 45);
+}
+
+/* An out-of-range profile falls back to first-fit rather than indexing past
+   the table (a hand-edited config can't crash the picker). */
+static void test_select_forced_out_of_range_falls_back(void) {
+    sensor_mode m[SENSOR_MODE_MAX];
+    int n = load_modes(m);
+    sensor_mode_choice c = sensor_mode_select(9, m, n, 1440, 1080, 30);
+    assert(c.index == 0 && c.fps == 30);
+}
+
+/* An empty table yields no choice. */
+static void test_select_empty_table(void) {
+    sensor_mode m[SENSOR_MODE_MAX];
+    sensor_mode_choice c = sensor_mode_select(-1, m, 0, 1440, 1080, 30);
+    assert(c.index < 0);
+    c = sensor_mode_select(0, m, 0, 1440, 1080, 30);
+    assert(c.index < 0);
+}
+
 int main(void) {
     test_parse_proc_extracts_only_resolution_rows();
     test_parse_proc_caps_at_max();
     test_parse_proc_empty_on_garbage();
+    test_select_auto_first_fit();
+    test_select_auto_no_fit();
+    test_select_forced_in_range();
+    test_select_forced_caps_fps();
+    test_select_forced_out_of_range_falls_back();
+    test_select_empty_table();
 
     /* Smoke the logger on the parsed table under ASan/UBSan (catches desc
        overread / bad format). */

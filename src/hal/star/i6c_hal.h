@@ -34,7 +34,7 @@ int i6c_channel_unbind(char index);
 
 int i6c_config_load(char *path);
 
-int i6c_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate);
+int i6c_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile);
 void i6c_pipeline_destroy(void);
 
 int i6c_region_create(char handle, hal_rect rect, short opacity);

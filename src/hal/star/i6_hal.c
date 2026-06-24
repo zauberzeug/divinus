@@ -3,6 +3,7 @@
 #include "i6_hal.h"
 
 #include "../frc.h"
+#include "../sensor_mode.h"
 
 i6_aud_impl  i6_aud;
 i6_isp_impl  i6_isp;
@@ -230,7 +231,7 @@ int i6_config_load(char *path)
 
 int _i6_level3dnr = 1;
 
-int i6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate)
+int i6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile)
 {
     int ret;
     int level3dnr = _i6_level3dnr;
@@ -244,30 +245,70 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
         if (ret = i6_snr.fnSetPlaneMode(_i6_snr_index, 0))
             return ret;
 
+        // The sensor library gates every non-zero resolution behind a linear-mode
+        // flag (CustFunction cmd 0x23, pseudo-register 0x300A = 0x80); without it
+        // SetResolution(N) silently collapses to mode 0 and the high-fps crops are
+        // unreachable. Reverse-engineered on the IMX335; a no-op on sensors that
+        // don't expose the pseudo-register.
+        unsigned short linearMode[2] = { 0x300A, 0x0080 };
+        i6_snr.fnCustomFunction(_i6_snr_index, 0x23, sizeof(linearMode), linearMode, 0);
+
         if (ret = i6_snr.fnGetResolutionCount(_i6_snr_index, &count))
             return ret;
-        for (char i = 0; i < count; i++) {
+        if (count > SENSOR_MODE_MAX)
+            count = SENSOR_MODE_MAX;
+
+        // fnGetResolution corrupts the pipeline when queried past the index that
+        // is ultimately applied, so the table is built by querying ascending and
+        // stopping the moment sensor_mode_select commits to an index.
+        int forced = profile >= 0 && profile < (int)count;
+        int limit = forced ? profile : (int)count - 1;
+        // Off the stack: this bring-up runs on a small SDK thread stack and the
+        // table is ~1.4 KB; a stack copy corrupts the pipeline (sensor switches
+        // but the VPE never feeds the encoder). One bring-up at a time, so static
+        // is safe.
+        static sensor_mode modes[SENSOR_MODE_MAX];
+        sensor_mode_choice choice = { .index = -1, .fps = framerate };
+        for (int i = 0; i <= limit; i++) {
             if (ret = i6_snr.fnGetResolution(_i6_snr_index, i, &resolution))
                 return ret;
-
-            if (width > resolution.crop.width ||
-                height > resolution.crop.height ||
-                framerate > resolution.maxFps)
-                continue;
-
-            _i6_snr_profile = i;
-            if (ret = i6_snr.fnSetResolution(_i6_snr_index, _i6_snr_profile))
-                return ret;
-            _i6_snr_framerate = framerate;
-            if (ret = i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate))
-                return ret;
-            break;
+            sensor_mode *m = &modes[i];
+            memset(m, 0, sizeof(*m));
+            strncpy(m->desc, resolution.desc, sizeof(m->desc) - 1);
+            m->crop_width = resolution.crop.width;
+            m->crop_height = resolution.crop.height;
+            m->out_width = resolution.output.width;
+            m->out_height = resolution.output.height;
+            m->max_fps = resolution.maxFps;
+            m->min_fps = resolution.minFps;
+            if (!forced) {
+                choice = sensor_mode_select(-1, modes, i + 1, width, height, framerate);
+                if (choice.index >= 0)
+                    break;
+            }
         }
-        if (_i6_snr_profile < 0)
+        if (forced)
+            choice = sensor_mode_select(profile, modes, limit + 1, width, height, framerate);
+        if (choice.index < 0)
             return EXIT_FAILURE;
+
+        _i6_snr_profile = choice.index;
+        _i6_snr_framerate = choice.fps;
+        HAL_INFO("i6_snr", "selected profile %d (%s) for request %dx%d@%d -> %u fps\n",
+            _i6_snr_profile, modes[_i6_snr_profile].desc, width, height,
+            framerate, _i6_snr_framerate);
     }
 
     if (ret = i6_snr.fnSetOrientation(_i6_snr_index, mirror, flip))
+        return ret;
+
+    // The sensor library applies the per-mode register set only at Enable, so the
+    // resolution is committed across a Disable/Enable bracket here. Setting a non-zero
+    // mode before Enable otherwise streams mode-0 geometry and caps the rate at 30fps.
+    i6_snr.fnDisable(_i6_snr_index);
+    if (ret = i6_snr.fnSetResolution(_i6_snr_index, _i6_snr_profile))
+        return ret;
+    if (ret = i6_snr.fnEnable(_i6_snr_index))
         return ret;
 
     if (ret = i6_snr.fnGetPadInfo(_i6_snr_index, &_i6_snr_pad))
@@ -275,7 +316,11 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
     if (ret = i6_snr.fnGetPlaneInfo(_i6_snr_index, 0, &_i6_snr_plane))
         return ret;
     strncpy(sensor, _i6_snr_plane.sensName, sizeof(sensor) - 1);
-    if (ret = i6_snr.fnEnable(_i6_snr_index))
+    HAL_INFO("i6_snr", "active plane %ux%u precision %u bayer %u\n",
+        _i6_snr_plane.capt.width, _i6_snr_plane.capt.height,
+        _i6_snr_plane.precision, _i6_snr_plane.bayer);
+
+    if (ret = i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate))
         return ret;
 
     {

@@ -2,6 +2,7 @@
 #include "sock_send.h"
 #include "stream_cfg.h"
 #include "hal/captime.h"
+#include "hal/sensor_mode.h"
 
 #include "http_headers.h"
 
@@ -1730,6 +1731,48 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"server\":\"%s\"}", app_config.ntp_server);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/sensor")) {
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                /* -1 = auto (first-fit), 0..SENSOR_MODE_MAX-1 = forced mode;
+                   takes effect on the next restart. */
+                if (EQUALS(key, "profile")) {
+                    int p = atoi(value);
+                    if (p >= -1 && p < SENSOR_MODE_MAX)
+                        app_config.sensor_profile = p;
+                }
+            }
+        }
+        const sensor_mode *modes;
+        int n = sensor_mode_cached(&modes);
+        char body[4096];
+        int off = snprintf(body, sizeof(body),
+            "{\"profile\":%d,\"modes\":[", app_config.sensor_profile);
+        for (int i = 0; i < n && off < (int)sizeof(body); i++)
+            off += snprintf(body + off, sizeof(body) - off,
+                "%s{\"index\":%d,\"desc\":\"%s\",\"crop\":[%u,%u],"
+                "\"output\":[%u,%u],\"minFps\":%u,\"maxFps\":%u}",
+                i ? "," : "", i, modes[i].desc,
+                modes[i].crop_width, modes[i].crop_height,
+                modes[i].out_width, modes[i].out_height,
+                modes[i].min_fps, modes[i].max_fps);
+        if (off < (int)sizeof(body))
+            snprintf(body + off, sizeof(body) - off, "]}");
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "%s", body);
         send_and_close(req->clntFd, response, respLen);
         return;
     }

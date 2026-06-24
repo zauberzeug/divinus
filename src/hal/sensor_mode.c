@@ -54,6 +54,51 @@ int sensor_mode_read(int sensor_index, sensor_mode *modes, int max)
     return sensor_mode_parse_proc(buf, modes, max);
 }
 
+sensor_mode_choice sensor_mode_select(int profile, const sensor_mode *modes,
+    int count, unsigned short req_width, unsigned short req_height,
+    unsigned int req_fps)
+{
+    sensor_mode_choice choice = { .index = -1, .fps = req_fps };
+
+    if (profile >= 0 && profile < count) {
+        const sensor_mode *m = &modes[profile];
+        choice.index = profile;
+        if (req_fps > m->max_fps)
+            choice.fps = m->max_fps;
+        return choice;
+    }
+
+    for (int i = 0; i < count; i++) {
+        const sensor_mode *m = &modes[i];
+        if (req_width > m->crop_width || req_height > m->crop_height ||
+            req_fps > m->max_fps)
+            continue;
+        choice.index = i;
+        choice.fps = req_fps;
+        break;
+    }
+    return choice;
+}
+
+static sensor_mode cached_modes[SENSOR_MODE_MAX];
+static int cached_count;
+
+void sensor_mode_cache(const sensor_mode *modes, int count)
+{
+    if (count < 0)
+        count = 0;
+    if (count > SENSOR_MODE_MAX)
+        count = SENSOR_MODE_MAX;
+    memcpy(cached_modes, modes, count * sizeof(*cached_modes));
+    cached_count = count;
+}
+
+int sensor_mode_cached(const sensor_mode **modes)
+{
+    *modes = cached_modes;
+    return cached_count;
+}
+
 void sensor_mode_log(const char *mod, const sensor_mode *modes, int count)
 {
     HAL_INFO(mod, "Sensor exposes %d resolution mode(s):\n", count);

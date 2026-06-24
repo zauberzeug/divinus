@@ -2,6 +2,8 @@
 
 #include "m6_hal.h"
 
+#include "../sensor_mode.h"
+
 m6_aud_impl  m6_aud;
 m6_isp_impl  m6_isp;
 m6_rgn_impl  m6_rgn;
@@ -220,7 +222,7 @@ int m6_config_load(char *path)
 
 extern int _i6_level3dnr;
 
-int m6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate)
+int m6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile)
 {
     int ret;
 
@@ -235,25 +237,47 @@ int m6_pipeline_create(char index, short width, short height, char mirror, char 
 
         if (ret = m6_snr.fnGetResolutionCount(_m6_snr_index, &count))
             return ret;
-        for (char i = 0; i < count; i++) {
+        if (count > SENSOR_MODE_MAX)
+            count = SENSOR_MODE_MAX;
+
+        // fnGetResolution corrupts the pipeline when queried past the index that
+        // is ultimately applied, so the table is built by querying ascending and
+        // stopping the moment sensor_mode_select commits to an index.
+        int forced = profile >= 0 && profile < (int)count;
+        int limit = forced ? profile : (int)count - 1;
+        // Off the stack (see i6_hal.c): ~1.4 KB on a small SDK bring-up stack
+        // corrupts the pipeline. One bring-up at a time, so static is safe.
+        static sensor_mode modes[SENSOR_MODE_MAX];
+        sensor_mode_choice choice = { .index = -1, .fps = framerate };
+        for (int i = 0; i <= limit; i++) {
             if (ret = m6_snr.fnGetResolution(_m6_snr_index, i, &resolution))
                 return ret;
-
-            if (width > resolution.crop.width ||
-                height > resolution.crop.height ||
-                framerate > resolution.maxFps)
-                continue;
-
-            _m6_snr_profile = i;
-            if (ret = m6_snr.fnSetResolution(_m6_snr_index, _m6_snr_profile))
-                return ret;
-            _m6_snr_framerate = framerate;
-            if (ret = m6_snr.fnSetFramerate(_m6_snr_index, _m6_snr_framerate))
-                return ret;
-            break;
+            sensor_mode *m = &modes[i];
+            memset(m, 0, sizeof(*m));
+            strncpy(m->desc, resolution.desc, sizeof(m->desc) - 1);
+            m->crop_width = resolution.crop.width;
+            m->crop_height = resolution.crop.height;
+            m->out_width = resolution.output.width;
+            m->out_height = resolution.output.height;
+            m->max_fps = resolution.maxFps;
+            m->min_fps = resolution.minFps;
+            if (!forced) {
+                choice = sensor_mode_select(-1, modes, i + 1, width, height, framerate);
+                if (choice.index >= 0)
+                    break;
+            }
         }
-        if (_m6_snr_profile < 0)
+        if (forced)
+            choice = sensor_mode_select(profile, modes, limit + 1, width, height, framerate);
+        if (choice.index < 0)
             return EXIT_FAILURE;
+
+        _m6_snr_profile = choice.index;
+        if (ret = m6_snr.fnSetResolution(_m6_snr_index, _m6_snr_profile))
+            return ret;
+        _m6_snr_framerate = choice.fps;
+        if (ret = m6_snr.fnSetFramerate(_m6_snr_index, _m6_snr_framerate))
+            return ret;
     }
 
     if (ret = m6_snr.fnSetOrientation(_m6_snr_index, mirror, flip))

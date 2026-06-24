@@ -222,6 +222,31 @@
 			req.send();
 		}
 
+		/* Build the sensor-mode dropdown from the enumerated table the device
+		   reports (Auto + one option per mode), then select the configured
+		   profile. The list is sensor-specific, so it can't be hard-coded. */
+		function readSensor() {
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(req.responseText);
+				var sel = document.getElementById('sensor_profile');
+				if (!sel) return;
+				sel.innerHTML = '<option value="-1">Auto (first-fit)</option>';
+				var modes = dec.modes || [];
+				for (var i = 0; i < modes.length; i++) {
+					var m = modes[i];
+					var opt = document.createElement('option');
+					opt.value = m.index;
+					opt.text = '[' + m.index + '] ' + m.desc;
+					sel.appendChild(opt);
+				}
+				sel.value = dec.profile;
+			};
+			req.open('GET', '/api/sensor');
+			req.send();
+		}
+
 		function apiRead(endp) {
 			var req = new XMLHttpRequest();
 			req.onreadystatechange = function() {
@@ -321,6 +346,7 @@
 			applyExposure();
 			apiApply('gain');
 			apiApply('isp');
+			apiApply('sensor');
 			apiApply('mp4');
 			apiApply('mjpeg');
 			apiApply('jpeg');
@@ -428,6 +454,7 @@
 			readExposure();
 			apiRead('gain');
 			apiRead('isp');
+			readSensor();
 			apiRead('jpeg');
 			apiRead('mp4');
 			apiRead('mjpeg');
@@ -503,6 +530,15 @@
     				<fieldset>
     					<legend>ISP adjustments</legend>
     					<table class="w-100">
+    						<tr>
+    							<td><label for="sensor_profile" title="Sensor resolution mode. Auto keeps the first-fit picker; forcing a mode (e.g. the native low-latency high-fps crop) takes effect on Save & restart. An over-fast request is capped to the mode's max fps.">Sensor mode</label></td>
+    							<td><select id="sensor_profile">
+    								<option value="-1">Auto (first-fit)</option>
+    							</select></td>
+    						</tr>
+    						<tr>
+    							<td colspan="2"><small>Forcing a mode applies on Save &amp; restart; fps over the mode's ceiling is capped.</small></td>
+    						</tr>
     						<tr>
     							<td><label for="isp_mirror">Mirror</label></td>
     							<td><select id="isp_mirror">
