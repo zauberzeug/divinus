@@ -38,6 +38,7 @@ test_sock_send_SRC := $(SRCDIR)/sock_send.c
 test_stream_rtp_SRC := $(SRCDIR)/stream.c $(SRCDIR)/fmt/rtppkt.c $(SRCDIR)/hal/tools.c \
                        $(SRCDIR)/hal/captime.c
 test_rtp_split_SRC := $(SRCDIR)/fmt/rtppkt.c
+test_nal_epb_SRC := $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/bitbuf.c $(SRCDIR)/fmt/nal.c
 test_rtppkt_SRC := $(SRCDIR)/fmt/rtppkt.c
 test_frc_SRC := $(SRCDIR)/hal/frc.c
 test_sensor_mode_SRC := $(SRCDIR)/hal/sensor_mode.c

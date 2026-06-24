@@ -10,7 +10,7 @@ char *errstr(int error) {
 #if defined(__ARM_PCS_VFP)
         case HAL_PLATFORM_I6:
             level = (error >> 12) & 0xF;
-            error = error & 0xFF000FFF | (level > 0 ? (4 << 13) : 0);
+            error = (error & 0xFF000FFF) | (level > 0 ? (4 << 13) : 0);
             switch (module) {
                 case I6_SYS_MOD_SYS:
                     error |= (V4_SYS_MOD_SYS << 16); break;
@@ -32,7 +32,7 @@ char *errstr(int error) {
             break;
         case HAL_PLATFORM_I6C:
             level = (error >> 12) & 0xF;
-            error = error & 0xFF000FFF | (level > 0 ? (4 << 13) : 0);
+            error = (error & 0xFF000FFF) | (level > 0 ? (4 << 13) : 0);
             switch (module) {
                 case I6C_SYS_MOD_SYS:
                     error |= (V4_SYS_MOD_SYS << 16); break;
@@ -54,7 +54,7 @@ char *errstr(int error) {
             break;
         case HAL_PLATFORM_M6:
             level = (error >> 12) & 0xF;
-            error = error & 0xFF000FFF | (level > 0 ? (4 << 13) : 0);
+            error = (error & 0xFF000FFF) | (level > 0 ? (4 << 13) : 0);
             switch (module) {
                 case M6_SYS_MOD_SYS:
                     error |= (V4_SYS_MOD_SYS << 16); break;
@@ -76,7 +76,7 @@ char *errstr(int error) {
             break;
         case HAL_PLATFORM_RK:
             level = (error >> 13) & 0x7;
-            error = error & 0xFF001FFF | (level > 0 ? (4 << 13) : 0);
+            error = (error & 0xFF001FFF) | (level > 0 ? (4 << 13) : 0);
             switch (module) {
                 case RK_SYS_MOD_SYS:
                     error |= (V4_SYS_MOD_SYS << 16); break;
