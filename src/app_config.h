@@ -26,6 +26,8 @@ struct AppConfig {
     unsigned int venc_stream_thread_stack_size;
     unsigned int web_server_thread_stack_size;
     unsigned int watchdog;
+    // LAN NTP time source; empty keeps the image's /etc/ntp.conf untouched
+    char ntp_server[128];
 
     // [night_mode]
     bool night_mode_enable;

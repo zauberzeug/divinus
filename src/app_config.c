@@ -96,6 +96,8 @@ int app_config_save(void) {
     if (!EMPTY(timefmt) || EQUALS(timefmt, DEF_TIMEFMT))
         fprintf(file, "  time_format: %s\n", timefmt);
     fprintf(file, "  watchdog: %d\n", app_config.watchdog);
+    if (!EMPTY(app_config.ntp_server))
+        fprintf(file, "  ntp_server: %s\n", app_config.ntp_server);
 
     fprintf(file, "night_mode:\n");
     fprintf(file, "  enable: %s\n", app_config.night_mode_enable ? "true" : "false");
@@ -241,6 +243,7 @@ enum ConfigError app_config_parse(void) {
     app_config.venc_stream_thread_stack_size = 16 * 1024;
     app_config.web_server_thread_stack_size = 32 * 1024;
     app_config.watchdog = 0;
+    app_config.ntp_server[0] = '\0';
 
     app_config.mdns_enable = false;
 
@@ -369,6 +372,8 @@ enum ConfigError app_config_parse(void) {
     if (EMPTY(timefmt))
         strncpy(timefmt, DEF_TIMEFMT, sizeof(timefmt) - 1);
     parse_int(&ini, "system", "watchdog", 0, INT_MAX, &app_config.watchdog);
+    parse_param_value_n(&ini, "system", "ntp_server",
+        app_config.ntp_server, sizeof(app_config.ntp_server));
 
     err =
         parse_bool(&ini, "night_mode", "enable", &app_config.night_mode_enable);

@@ -37,10 +37,56 @@ void network_init(void) {
     configured = 1;
 }
 
+/* A hostname/IP charset only. The value is attacker-controllable via
+   /api/ntp and is written verbatim into /etc/ntp.conf (read by root's ntpd),
+   so reject anything that could inject extra config directives — notably the
+   newline/CR a percent-encoded query (%0a/%0d) decodes to. */
+bool ntp_server_valid(const char *server) {
+    if (EMPTY(server))
+        return false;
+    for (const char *p = server; *p; p++) {
+        bool ok = (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                  (*p >= '0' && *p <= '9') || *p == '.' || *p == ':' ||
+                  *p == '-' || *p == '_';
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+int ntp_apply(void) {
+    if (EMPTY(app_config.ntp_server))
+        return EXIT_SUCCESS;
+
+    if (!ntp_server_valid(app_config.ntp_server)) {
+        HAL_DANGER("ntp", "Refusing invalid NTP server '%s'\n", app_config.ntp_server);
+        return EXIT_FAILURE;
+    }
+
+    FILE *conf = fopen("/etc/ntp.conf", "w");
+    if (!conf) {
+        HAL_DANGER("ntp", "Failed to open /etc/ntp.conf: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+    fprintf(conf, "server %s iburst\n", app_config.ntp_server);
+    fclose(conf);
+
+    /* busybox ntpd re-reads /etc/ntp.conf only on (re)start */
+    if (system("/etc/init.d/S49ntpd restart") == -1) {
+        HAL_DANGER("ntp", "Failed to restart ntpd: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    HAL_INFO("ntp", "Time source set to '%s'\n", app_config.ntp_server);
+    return EXIT_SUCCESS;
+}
+
 int network_start(void) {
     network_init();
     if (!configured)
         return EXIT_FAILURE;
+
+    ntp_apply();
 
     if (app_config.mdns_enable)
         mdns_start();
