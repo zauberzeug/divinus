@@ -45,6 +45,16 @@ def report(name: str, ok: bool, detail: str) -> None:
     print(f"  {'PASS' if ok else 'FAIL'}  {name}: {detail}")
 
 
+def fps_budget(fps: float, duration_s: float, fraction: float = 0.8) -> int:
+    """Minimum complete frames a healthy stream at `fps` should deliver over
+    `duration_s`: a `fraction` of the achievable budget (fps x duration). The
+    fast-consumer check derives its threshold from this instead of a fixed
+    count, so it tracks the configured rate — a stream healthy at 5 fps is not
+    judged against a 6.7 fps assumption — while a genuine shortfall still trips
+    it. The fraction is headroom for the startup ramp and frame-rate jitter."""
+    return max(1, int(fps * duration_s * fraction))
+
+
 def read_mjpeg_frames(duration_s: float, recv_size: int, delay_s: float):
     """Yield (content_length, jpeg_bytes) parts from /mjpeg for duration_s;
     a small recv_size plus delay throttles the drain rate to simulate a slow
@@ -202,6 +212,14 @@ def api_bool(path: str, key: str) -> bool:
     return re.search(rf'"{key}":true', api(path)) is not None
 
 
+def mjpeg_fps(default: int = 5) -> int:
+    """Configured MJPEG frame rate from the camera. Falls back to `default` if
+    the fps field is absent or unparseable, yielding the most lenient budget
+    rather than a false failure."""
+    fps = api_int("/api/mjpeg", "fps")
+    return fps if fps > 0 else default
+
+
 def grab_luma() -> float:
     """Mean luma (0-255) of one fresh MJPEG frame."""
     for _clen, body in read_mjpeg_frames(duration_s=6.0, recv_size=65536, delay_s=0):
@@ -353,8 +371,11 @@ def wanted(name: str) -> bool:
 print(f"=== divinus stream integrity tests against {CAM} ===")
 
 if wanted("mjpeg-fast"):
-    print("[1/5] MJPEG, fast consumer (64 KiB reads, no delay, 30 s sustained)...")
-    test_mjpeg("mjpeg-fast", duration_s=30.0, recv_size=65536, delay_s=0, min_frames=200)
+    fast_fps = mjpeg_fps()
+    fast_budget = fps_budget(fast_fps, 30.0)
+    print(f"[1/5] MJPEG, fast consumer (64 KiB reads, no delay, 30 s sustained, "
+          f"{fast_fps} fps -> >= {fast_budget} frames)...")
+    test_mjpeg("mjpeg-fast", duration_s=30.0, recv_size=65536, delay_s=0, min_frames=fast_budget)
 
 if wanted("mjpeg-slow"):
     print("[2/5] MJPEG, slow consumer (8 KiB reads, 10 ms delay -> steady ~0.8 MB/s drain)...")
