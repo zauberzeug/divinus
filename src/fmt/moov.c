@@ -895,10 +895,10 @@ enum BufError write_avcC(struct BitBuf *ptr, const struct MoovInfo *moov_info) {
 }
 
 /* Discards emulation prevention three bytes */
-static inline size_t nal_decode(const uint8_t *p_src, uint8_t *p_dst, size_t i_size) {
+size_t nal_decode(const uint8_t *p_src, uint8_t *p_dst, size_t i_size) {
     size_t j = 0;
     for (size_t i = 0; i < i_size; i++) {
-        if (i < i_size - 3 && p_src[i] == 0 && p_src[i + 1] == 0 &&
+        if (i + 3 < i_size && p_src[i] == 0 && p_src[i + 1] == 0 &&
             p_src[i + 2] == 3) {
             p_dst[j++] = 0;
             p_dst[j++] = 0;
