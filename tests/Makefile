@@ -45,6 +45,7 @@ test_sensor_mode_SRC := $(SRCDIR)/hal/sensor_mode.c
 test_captime_SRC := $(SRCDIR)/hal/captime.c
 test_rtcp_sr_SRC := $(SRCDIR)/hal/captime.c
 test_gain_SRC := $(SRCDIR)/gain.c
+test_api_int_SRC := $(SRCDIR)/hal/tools.c
 
 .PHONY: all clean
 all: $(BINS)

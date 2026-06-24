@@ -73,6 +73,13 @@ char *memstr(char *haystack, char *needle, int size, char needlesize);
 
 unsigned int millis();
 
+/* Parse a decimal API query value into [min, max]. Returns true and writes
+   *out on success; on a non-numeric or out-of-range value returns false and
+   leaves *out untouched, so the caller keeps its prior value. Mirrors
+   parse_int() on the config-file path — the /api/* setters previously parsed
+   through a `short` and truncated any value above 32767. */
+bool parse_api_int(const char *value, int min, int max, int *out);
+
 void reverse(void *arr, size_t width);
 
 void sha1_init(sha1_context *context);
