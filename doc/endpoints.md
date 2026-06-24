@@ -131,7 +131,7 @@ Configures the H.26x MP4 stream.
 | GET    | `width`    | Video width (px)                           |
 | GET    | `height`   | Video height (px)                          |
 | GET    | `fps`      | Frames per second                          |
-| GET    | `bitrate`  | Bits per second                            |
+| GET    | `bitrate`  | Bitrate in kbps                            |
 | GET    | `h265`     | Use H.265 instead of H.264                 |
 | GET    | `mode`     | Compression mode (CBR, VBR, QP, ABR, AVBR) |
 | GET    | `profile`  | Profile (BP/BASELINE, MP/MAIN, HP/HIGH)    |
@@ -159,7 +159,7 @@ Configures the audio parameters.
 | Method | Parameters | Description                   |
 |--------|------------|-------------------------------|
 | GET    | `enable`   | Enable/disable audio          |
-| GET    | `bitrate`  | Bits per second               |
+| GET    | `bitrate`  | Bitrate in kbps               |
 | GET    | `gain`     | Audio gain (dB amplification) |
 | GET    | `srate`    | Sample rate in Hz             |
 
