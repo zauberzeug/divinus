@@ -20,7 +20,16 @@ Verifies against a live camera that
   5. the raw UDP push enables/disables at runtime via /api/stream with no reboot,
      emitting decodable RTP (split SPS/PPS/IDR) to this host while enabled.
 
-Usage: uv run test_streams.py [camera-ip]
+The exposure sub-tests mutate fps/exposure/gain live; a failure used to
+leave the camera wedged ("Main stream loop timed out") and confound later stream
+probing. They now run only on request and always restore a known-good streaming
+state (see `restore_streaming`), so stream-integrity checks stay clean.
+
+Usage:
+  uv run test_streams.py [camera-ip]                 # streams only (no exposure mutation)
+  uv run test_streams.py [camera-ip] all             # streams + exposure
+  uv run test_streams.py [camera-ip] exposure        # exposure tests only
+  uv run test_streams.py [camera-ip] <test-names...> # explicit subset, e.g. rtsp-tcp fmp4-http
 """
 
 import io
@@ -211,15 +220,42 @@ def grab_luma() -> float:
     return -1.0
 
 
+def frame_flow_ok(timeout_s: float = 8.0) -> bool:
+    """True if a complete MJPEG frame arrives within timeout_s — proof the
+    sensor/encoder loop is live, not wedged."""
+    try:
+        for clen, body in read_mjpeg_frames(duration_s=timeout_s, recv_size=65536, delay_s=0):
+            return check_jpeg(body, clen) is None
+    except (ConnectionError, TimeoutError):
+        return False
+    return False
+
+
+def restore_streaming(name: str, mjpeg_fps_was: int) -> None:
+    """Teardown for the live-mutating exposure tests: put fps/exposure/gain back
+    to a known-good streaming state and confirm frames flow again, EVEN when the
+    test body failed mid-run. A failure to resume is reported loudly rather than
+    silently handed to the next run."""
+    if mjpeg_fps_was > 0:
+        api(f"/api/mjpeg?fps={mjpeg_fps_was}")
+    api("/api/exposure?value=0")
+    api("/api/gain?min_gain=0&max_gain=0&min_isp_gain=0&max_isp_gain=0")
+    time.sleep(2)
+    if not frame_flow_ok():
+        report(f"{name}-teardown", False, "frame flow did NOT resume after restore (camera wedged)")
+
+
 def test_exposure_reacts_to_fps() -> None:
     """A live fps change (web-UI 'Apply' path, no restart) must move the sensor
     rate, so `exposure: max` re-pins to the new frame budget. Regression: the
     sensor rate used to update only at boot, so max stayed at the boot budget."""
     name = "exposure-fps-react"
-    mp4_was = api_bool("/api/mp4", "enable")
     mjpeg_fps_was = api_int("/api/mjpeg", "fps")
     try:
-        api("/api/mp4?enable=false")  # mjpeg alone drives the sensor rate
+        # mp4 stays enabled: changing the sensor fps while it is the *only* active
+        # encoder wedges the shared main loop ("Main stream loop timed out") with
+        # no API recovery. The mjpeg fps change drives the sensor budget either
+        # way, so the regression is still exercised.
         api("/api/mjpeg?enable=true&fps=20"); time.sleep(2)
         api("/api/exposure?value=max"); time.sleep(2)
         hi = api_int("/api/gain", "shutter_us")          # ~ 1e6/20 = 50000
@@ -230,11 +266,7 @@ def test_exposure_reacts_to_fps() -> None:
         report(name, ok, f"max shutter @20fps={hi}us -> @5fps={lo}us "
                          f"(expect ~50000 -> ~200000; no restart)")
     finally:
-        if mp4_was:
-            api("/api/mp4?enable=true")
-        if mjpeg_fps_was > 0:
-            api(f"/api/mjpeg?fps={mjpeg_fps_was}")
-        api("/api/exposure?value=0")
+        restore_streaming(name, mjpeg_fps_was)
 
 
 def test_exposure_brightness() -> None:
@@ -242,6 +274,7 @@ def test_exposure_brightness() -> None:
     longer fixed exposure is visibly brighter. Guards against trusting the
     shutter read-back when the actual integration does not change."""
     name = "exposure-brightness"
+    mjpeg_fps_was = api_int("/api/mjpeg", "fps")
     try:
         api("/api/gain?min_gain=1024&max_gain=1024&min_isp_gain=1024&max_isp_gain=1024")
         api("/api/exposure?value=2000"); time.sleep(2)
@@ -252,8 +285,7 @@ def test_exposure_brightness() -> None:
         report(name, ok, f"luma @2ms={dim:.1f} -> @20ms={bright:.1f} "
                          f"(gain pinned 1x; longer shutter must brighten)")
     finally:
-        api("/api/gain?min_gain=0&max_gain=0&min_isp_gain=0&max_isp_gain=0")
-        api("/api/exposure?value=0")
+        restore_streaming(name, mjpeg_fps_was)
 
 
 def host_ip_seen_by_camera() -> str:
@@ -343,11 +375,30 @@ def test_stream_udp_runtime(port: int = 5600) -> None:
             api("/api/stream?enable=false")
 
 
-only = set(sys.argv[2:])  # optional test names to run, e.g. mjpeg-fast rtsp-tcp
+# The exposure tests mutate fps/exposure/gain live; they run only on request so
+# stream-integrity checks stay clean. Default (no args) = streams only.
+STREAM_TESTS = {"mjpeg-fast", "mjpeg-slow", "rtsp-tcp", "rtsp-udp", "fmp4-http", "stream-udp-runtime"}
+EXPOSURE_TESTS = {"exposure-fps-react", "exposure-brightness"}
+
+args = sys.argv[2:]  # group keyword, --no-exposure, or explicit test names
+selected: set[str] = set()
+for arg in args:
+    if arg in ("all", "--all"):
+        selected |= STREAM_TESTS | EXPOSURE_TESTS
+    elif arg in ("streams", "--no-exposure"):
+        selected |= STREAM_TESTS
+    elif arg == "exposure":
+        selected |= EXPOSURE_TESTS
+    elif arg in STREAM_TESTS | EXPOSURE_TESTS:
+        selected.add(arg)
+    else:
+        sys.exit(f"unknown test/group '{arg}'; pick from: all, streams, exposure, "
+                 f"{', '.join(sorted(STREAM_TESTS | EXPOSURE_TESTS))}")
+only = selected or STREAM_TESTS  # default: streams only, never the live-mutating exposure tests
 
 
 def wanted(name: str) -> bool:
-    return not only or name in only
+    return name in only
 
 
 print(f"=== divinus stream integrity tests against {CAM} ===")
@@ -373,11 +424,11 @@ if wanted("fmp4-http"):
     test_fmp4()
 
 if wanted("exposure-fps-react"):
-    print("[6/7] Exposure budget reacts to a live fps change (no restart)...")
+    print("[exposure] Budget reacts to a live fps change (no restart)...")
     test_exposure_reacts_to_fps()
 
 if wanted("exposure-brightness"):
-    print("[7/8] Exposure brightness tracks shutter (gain pinned 1x)...")
+    print("[exposure] Brightness tracks shutter (gain pinned 1x)...")
     test_exposure_brightness()
 
 if wanted("stream-udp-runtime"):
