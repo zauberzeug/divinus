@@ -129,8 +129,10 @@ bool parse_api_int(const char *value, int min, int max, int *out) {
     long result = strtol(value, &remain, 10);
     if (remain == value)
         return false;
-    if (result < min || result > max)
-        return false;
+    if (result < min)
+        result = min;
+    else if (result > max)
+        result = max;
     *out = (int)result;
     return true;
 }
