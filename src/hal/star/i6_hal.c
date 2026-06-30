@@ -748,21 +748,25 @@ int i6_video_destroy(char index)
 
     {
         unsigned int device;
-        if (ret = i6_venc.fnGetChannelDeviceId(index, &device))
-            return ret;
-        i6_sys_bind source = { .module = I6_SYS_MOD_VPE,
-            .device = _i6_vpe_dev, .channel = _i6_vpe_chn, .port = index };
-        i6_sys_bind dest = { .module = I6_SYS_MOD_VENC,
-            .device = device, .channel = index, .port = _i6_venc_port };
-        if (ret = i6_sys.fnUnbind(&source, &dest))
-            return ret;
+        /* Teardown must be idempotent: on a runtime reconfig, media.c's
+           unbind_channel() has already unbound this channel and disabled the
+           VPE port, so a second unbind/disable here returns "already done".
+           Those are non-fatal — only fnDestroyChannel must succeed, otherwise
+           the channel survives and a subsequent recreate silently keeps the
+           old encoder config (bitrate/mode/QP changes get ignored). */
+        if (!i6_venc.fnGetChannelDeviceId(index, &device)) {
+            i6_sys_bind source = { .module = I6_SYS_MOD_VPE,
+                .device = _i6_vpe_dev, .channel = _i6_vpe_chn, .port = index };
+            i6_sys_bind dest = { .module = I6_SYS_MOD_VENC,
+                .device = device, .channel = index, .port = _i6_venc_port };
+            i6_sys.fnUnbind(&source, &dest);
+        }
     }
 
     if (ret = i6_venc.fnDestroyChannel(index))
         return ret;
 
-    if (ret = i6_vpe.fnDisablePort(_i6_vpe_chn, index))
-        return ret;
+    i6_vpe.fnDisablePort(_i6_vpe_chn, index);
 
     return EXIT_SUCCESS;
 }
