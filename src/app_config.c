@@ -169,6 +169,8 @@ int app_config_save(void) {
     fprintf(file, "  gop: %d\n", app_config.mp4_gop);
     fprintf(file, "  profile: %d\n", app_config.mp4_profile);
     fprintf(file, "  bitrate: %d\n", app_config.mp4_bitrate);
+    fprintf(file, "  min_qual: %d\n", app_config.mp4_min_qual);
+    fprintf(file, "  max_qual: %d\n", app_config.mp4_max_qual);
 
     fprintf(file, "osd:\n");
     fprintf(file, "  enable: %s\n", app_config.osd_enable ? "true" : "false");
@@ -289,6 +291,12 @@ enum ConfigError app_config_parse(void) {
     app_config.mp4_fps = 30;
     app_config.mp4_gop = 30;
     app_config.mp4_bitrate = 1024;
+    /* H.265/H.264 QP bounds for VBR/AVBR/QP rate control (HEVC QP 0..51, lower
+       = better). These are the encoder quality floor/ceiling; the historical
+       hardcoded values were 34/48. A lower min_qual lets the encoder spend the
+       configured bitrate instead of saturating at a coarse QP on easy scenes. */
+    app_config.mp4_min_qual = 34;
+    app_config.mp4_max_qual = 48;
 
     app_config.mjpeg_enable = false;
     app_config.mjpeg_fps = 15;
@@ -557,6 +565,15 @@ enum ConfigError app_config_parse(void) {
     err = parse_int(&ini, "mp4", "bitrate", 32, INT_MAX, &app_config.mp4_bitrate);
     if (err != CONFIG_OK && app_config.mp4_enable)
         goto RET_ERR;
+    /* QP bounds: HEVC range is 0..51 (lower = better). Optional; default 34/48
+       set above. min must not exceed max — swap if mis-ordered. */
+    parse_int(&ini, "mp4", "min_qual", 0, 51, &app_config.mp4_min_qual);
+    parse_int(&ini, "mp4", "max_qual", 0, 51, &app_config.mp4_max_qual);
+    if (app_config.mp4_min_qual > app_config.mp4_max_qual) {
+        unsigned int tmp = app_config.mp4_min_qual;
+        app_config.mp4_min_qual = app_config.mp4_max_qual;
+        app_config.mp4_max_qual = tmp;
+    }
 
     err = parse_bool(&ini, "jpeg", "enable", &app_config.jpeg_enable);
     if (err != CONFIG_OK)
