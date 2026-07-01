@@ -285,7 +285,8 @@ static int udp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
     }
 
     /* Space out fragments (hdr_len > 0) so a burst of FU packets doesn't
-       overrun the socket buffer. Tracked for removal under the latency epic. */
+       overrun the socket buffer. TODO: drop the throttle once the send path
+       is non-blocking. */
     if (hdr_len && e->throttle_us) usleep(e->throttle_us);
     return EXIT_SUCCESS;
 }

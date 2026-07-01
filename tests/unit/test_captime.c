@@ -59,9 +59,10 @@ static void test_implausible_age_rejected_without_writing(void) {
 }
 
 static void test_vendor_clock_behind_is_symmetric(void) {
-    /* §9.1's sign is not yet measured: the offset may be negative (vendor
-       clock behind MONOTONIC_RAW). The signed math must be correct either
-       way, so the measured number can be dropped in without a code change. */
+    /* The calibration offset's sign is not yet measured: the offset may be
+       negative (vendor clock behind MONOTONIC_RAW). The signed math must be
+       correct either way, so the measured number can be dropped in without a
+       code change. */
     captime_calib cal = { .pts_minus_mono_us = -430000ll, .max_frame_age_us = 5000000ull };
     unsigned long long mono_now = 1000000000ull;
     unsigned long long pts = mono_now - 30000ull - 430000ull;  /* 30 ms old, clock behind */
