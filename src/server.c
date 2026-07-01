@@ -5,6 +5,8 @@
 
 #include "http_headers.h"
 
+#include <limits.h>
+
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
 #define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
@@ -861,26 +863,23 @@ void respond_request(http_request_t *req) {
             task->color2Gray = 0;
 
             if (req->query) {
-                char *remain;
+                int v;
                 while (req->query) {
                     char *value = split(&req->query, "&");
                     if (!value || !*value) continue;
                     char *key = split(&value, "=");
                     if (!key || !*key || !value || !*value) continue;
                     if (EQUALS(key, "width")) {
-                        short result = strtol(value, &remain, 10);
-                        if (remain != value)
-                            task->width = result;
+                        if (parse_api_int(value, 1, USHRT_MAX, &v))
+                            task->width = v;
                     }
                     else if (EQUALS(key, "height")) {
-                        short result = strtol(value, &remain, 10);
-                        if (remain != value)
-                            task->height = result;
+                        if (parse_api_int(value, 1, USHRT_MAX, &v))
+                            task->height = v;
                     }
                     else if (EQUALS(key, "qfactor")) {
-                        short result = strtol(value, &remain, 10);
-                        if (remain != value)
-                            task->qfactor = result;
+                        if (parse_api_int(value, 1, 99, &v))
+                            task->qfactor = v;
                     }
                     else if (EQUALS(key, "color2gray") || EQUALS(key, "gray")) {
                         if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
@@ -914,7 +913,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/audio")) {
         if (req->query) {
-            char *remain;
+            int v;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -922,22 +921,19 @@ void respond_request(http_request_t *req) {
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
                 if (EQUALS(key, "bitrate")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.audio_bitrate = result;
+                    if (parse_api_int(value, 32, 320, &v))
+                        app_config.audio_bitrate = v;
                 } else if (EQUALS(key, "enable")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         app_config.audio_enable = 1;
                     else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
                         app_config.audio_enable = 0;
                 } else if (EQUALS(key, "gain")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.audio_gain = result;
+                    if (parse_api_int(value, -60, 30, &v))
+                        app_config.audio_gain = v;
                 } else if (EQUALS(key, "srate")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.audio_srate = result;
+                    if (parse_api_int(value, 8000, 96000, &v))
+                        app_config.audio_srate = v;
                 }
             }
 
@@ -1034,7 +1030,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/jpeg")) {
         if (req->query) {
-            char *remain;
+            int v;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -1042,17 +1038,14 @@ void respond_request(http_request_t *req) {
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
                 if (EQUALS(key, "width")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.jpeg_width = result;
+                    if (parse_api_int(value, 160, INT_MAX, &v))
+                        app_config.jpeg_width = v;
                 } else if (EQUALS(key, "height")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.jpeg_height = result;
+                    if (parse_api_int(value, 120, INT_MAX, &v))
+                        app_config.jpeg_height = v;
                 } else if (EQUALS(key, "qfactor")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.jpeg_qfactor = result;
+                    if (parse_api_int(value, 1, 99, &v))
+                        app_config.jpeg_qfactor = v;
                 }
             }
 
@@ -1074,7 +1067,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/mjpeg")) {
         if (req->query) {
-            char *remain;
+            int v;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -1087,25 +1080,20 @@ void respond_request(http_request_t *req) {
                     else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
                         app_config.mjpeg_enable = 0;
                 } else if (EQUALS(key, "width")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mjpeg_width = result;
+                    if (parse_api_int(value, 160, INT_MAX, &v))
+                        app_config.mjpeg_width = v;
                 } else if (EQUALS(key, "height")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mjpeg_height = result;
+                    if (parse_api_int(value, 120, INT_MAX, &v))
+                        app_config.mjpeg_height = v;
                 } else if (EQUALS(key, "fps")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mjpeg_fps = result;
+                    if (parse_api_int(value, 1, INT_MAX, &v))
+                        app_config.mjpeg_fps = v;
                 } else if (EQUALS(key, "bitrate")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mjpeg_bitrate = result;
+                    if (parse_api_int(value, 32, INT_MAX, &v))
+                        app_config.mjpeg_bitrate = v;
                 } else if (EQUALS(key, "qfactor")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mjpeg_qfactor = result;
+                    if (parse_api_int(value, 0, 99, &v))
+                        app_config.mjpeg_qfactor = v;
                 } else if (EQUALS(key, "mode")) {
                     if (EQUALS_CASE(value, "CBR"))
                         app_config.mjpeg_mode = HAL_VIDMODE_CBR;
@@ -1143,7 +1131,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/mp4")) {
         if (req->query) {
-            char *remain;
+            int v;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -1156,25 +1144,20 @@ void respond_request(http_request_t *req) {
                     else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
                         app_config.mp4_enable = 0;
                 } else if (EQUALS(key, "width")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mp4_width = result;
+                    if (parse_api_int(value, 160, INT_MAX, &v))
+                        app_config.mp4_width = v;
                 } else if (EQUALS(key, "height")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mp4_height = result;
+                    if (parse_api_int(value, 120, INT_MAX, &v))
+                        app_config.mp4_height = v;
                 } else if (EQUALS(key, "fps")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mp4_fps = result;
+                    if (parse_api_int(value, 1, INT_MAX, &v))
+                        app_config.mp4_fps = v;
                 } else if (EQUALS(key, "gop")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value && result >= 1)
-                        app_config.mp4_gop = result;
+                    if (parse_api_int(value, 1, INT_MAX, &v))
+                        app_config.mp4_gop = v;
                 } else if (EQUALS(key, "bitrate")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.mp4_bitrate = result;
+                    if (parse_api_int(value, 32, INT_MAX, &v))
+                        app_config.mp4_bitrate = v;
                 } else if (EQUALS(key, "h265")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         app_config.mp4_codecH265 = 1;
@@ -1199,13 +1182,11 @@ void respond_request(http_request_t *req) {
                     else if (EQUALS_CASE(value, "HP") || EQUALS_CASE(value, "HIGH"))
                         app_config.mp4_profile = HAL_VIDPROFILE_HIGH;
                 } else if (EQUALS(key, "min_qual")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value && result >= 0 && result <= 51)
-                        app_config.mp4_min_qual = result;
+                    if (parse_api_int(value, 0, 51, &v))
+                        app_config.mp4_min_qual = v;
                 } else if (EQUALS(key, "max_qual")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value && result >= 0 && result <= 51)
-                        app_config.mp4_max_qual = result;
+                    if (parse_api_int(value, 0, 51, &v))
+                        app_config.mp4_max_qual = v;
                 }
             }
 
@@ -1253,7 +1234,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/night")) {
         if (req->query) {
-            char *remain;
+            int v;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -1268,9 +1249,8 @@ void respond_request(http_request_t *req) {
                 } else if (EQUALS(key, "adc_device")) {
                     strncpy(app_config.adc_device, value, sizeof(app_config.adc_device));
                 } else if (EQUALS(key, "adc_threshold")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.adc_threshold = result;
+                    if (parse_api_int(value, INT_MIN, INT_MAX, &v))
+                        app_config.adc_threshold = v;
                 } else if (EQUALS(key, "grayscale")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         night_grayscale(1);
@@ -1282,26 +1262,22 @@ void respond_request(http_request_t *req) {
                     else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
                         night_ircut(0);
                 } else if (EQUALS(key, "ircut_pin1")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.ir_cut_pin1 = result;
+                    if (parse_api_int(value, 0, 95, &v))
+                        app_config.ir_cut_pin1 = v;
                 } else if (EQUALS(key, "ircut_pin2")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.ir_cut_pin2 = result;
+                    if (parse_api_int(value, 0, 95, &v))
+                        app_config.ir_cut_pin2 = v;
                 } else if (EQUALS(key, "irled")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         night_irled(1);
                     else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
                         night_irled(0);
                 } else if (EQUALS(key, "irled_pin")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.ir_led_pin = result;
+                    if (parse_api_int(value, 0, 95, &v))
+                        app_config.ir_led_pin = v;
                 } else if (EQUALS(key, "irsense_pin")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.ir_sensor_pin = result;
+                    if (parse_api_int(value, 0, 95, &v))
+                        app_config.ir_sensor_pin = v;
                 } else if (EQUALS(key, "manual")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         night_manual(1);
@@ -1421,19 +1397,19 @@ void respond_request(http_request_t *req) {
                     osds[id].color = result;
                 }
                 else if (EQUALS(key, "opal")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        osds[id].opal = result & 0xFF;
+                    int v;
+                    if (parse_api_int(value, 0, UCHAR_MAX, &v))
+                        osds[id].opal = v;
                 }
                 else if (EQUALS(key, "posx")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        osds[id].posx = result;
+                    int v;
+                    if (parse_api_int(value, 0, SHRT_MAX, &v))
+                        osds[id].posx = v;
                 }
                 else if (EQUALS(key, "posy")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        osds[id].posy = result;
+                    int v;
+                    if (parse_api_int(value, 0, SHRT_MAX, &v))
+                        osds[id].posy = v;
                 }
                 else if (EQUALS(key, "pos")) {
                     int x, y;
@@ -1474,7 +1450,7 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/record")) {
         if (req->query) {
-            char *remain;
+            int v;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -1498,14 +1474,12 @@ void respond_request(http_request_t *req) {
                 else if (EQUALS(key, "filename"))
                     strncpy(app_config.record_filename, value, sizeof(app_config.record_filename) - 1);
                 else if (EQUALS(key, "segment_duration")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.record_segment_duration = result;
+                    if (parse_api_int(value, 0, INT_MAX, &v))
+                        app_config.record_segment_duration = v;
                 }
                 else if (EQUALS(key, "segment_size")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain != value)
-                        app_config.record_segment_size = result;
+                    if (parse_api_int(value, 0, INT_MAX, &v))
+                        app_config.record_segment_size = v;
                 }
 
                 if (!app_config.record_enable) continue;
@@ -1690,7 +1664,7 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/time")) {
-        struct timespec t;
+        struct timespec t = {0};
         if (req->query) {
             char *remain;
             while (req->query) {
@@ -1702,7 +1676,7 @@ void respond_request(http_request_t *req) {
                 if (EQUALS(key, "fmt")) {
                     strncpy(timefmt, value, 32);
                 } else if (EQUALS(key, "ts")) {
-                    short result = strtol(value, &remain, 10);
+                    long long result = strtoll(value, &remain, 10);
                     if (remain == value) continue;
                     t.tv_sec = result;
                     clock_settime(CLOCK_REALTIME, &t);
