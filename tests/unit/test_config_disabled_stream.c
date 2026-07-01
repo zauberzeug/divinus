@@ -119,6 +119,76 @@ static void test_disabled_mp4_survives_save_reload(void) {
     assert(app_config.mp4_bitrate == 3072);
 }
 
+static void test_disabled_http_post_keeps_params(void) {
+    load("http_post:\n  enable: false\n  host: cam.local\n  url: /upload\n"
+         "  login: u\n  password: p\n  width: 800\n  height: 600\n"
+         "  interval: 5\n  qfactor: 70\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(!app_config.http_post_enable);
+    assert(strcmp(app_config.http_post_host, "cam.local") == 0);
+    assert(strcmp(app_config.http_post_url, "/upload") == 0);
+    assert(strcmp(app_config.http_post_login, "u") == 0);
+    assert(strcmp(app_config.http_post_password, "p") == 0);
+    assert(app_config.http_post_width == 800);
+    assert(app_config.http_post_height == 600);
+    assert(app_config.http_post_interval == 5);
+    assert(app_config.http_post_qfactor == 70);
+}
+
+static void test_disabled_http_post_survives_save_reload(void) {
+    /* The bug's actual mechanism: enable with distinctive params, disable,
+       then save + reload. A correct parser must keep the disabled values. */
+    load("http_post:\n  enable: true\n  host: save.local\n  url: /api/upload\n"
+         "  login: saveu\n  password: savep\n  width: 1024\n  height: 768\n"
+         "  interval: 9\n  qfactor: 61\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(app_config.http_post_enable);
+    assert(strcmp(app_config.http_post_host, "save.local") == 0);
+
+    app_config.http_post_enable = false;       /* user turns the section off */
+    assert(app_config_save() == EXIT_SUCCESS); /* persists every param */
+    assert(app_config_parse() == CONFIG_OK);
+
+    assert(!app_config.http_post_enable);
+    assert(strcmp(app_config.http_post_host, "save.local") == 0);
+    assert(strcmp(app_config.http_post_url, "/api/upload") == 0);
+    assert(strcmp(app_config.http_post_login, "saveu") == 0);
+    assert(strcmp(app_config.http_post_password, "savep") == 0);
+    assert(app_config.http_post_width == 1024);
+    assert(app_config.http_post_height == 768);
+    assert(app_config.http_post_interval == 9);
+    assert(app_config.http_post_qfactor == 61);
+}
+
+static void test_disabled_audio_keeps_params(void) {
+    load("audio:\n  enable: false\n  bitrate: 256\n  gain: 12\n  srate: 44100\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(!app_config.audio_enable);
+    assert(app_config.audio_bitrate == 256);
+    assert(app_config.audio_gain == 12);
+    assert(app_config.audio_srate == 44100);
+}
+
+static void test_disabled_night_mode_keeps_params(void) {
+    /* night_mode params are written unconditionally too; a disabled section
+       must keep its configured pins/thresholds. Values differ from the reset
+       defaults (pins 999, interval 10, delay 250, threshold 128, empty dev). */
+    load("night_mode:\n  enable: false\n  ir_sensor_pin: 5\n"
+         "  check_interval_s: 30\n  ir_cut_pin1: 6\n  ir_cut_pin2: 7\n"
+         "  ir_led_pin: 8\n  pin_switch_delay_us: 500\n"
+         "  adc_device: /dev/adc0\n  adc_threshold: 200\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(!app_config.night_mode_enable);
+    assert(app_config.ir_sensor_pin == 5);
+    assert(app_config.check_interval_s == 30);
+    assert(app_config.ir_cut_pin1 == 6);
+    assert(app_config.ir_cut_pin2 == 7);
+    assert(app_config.ir_led_pin == 8);
+    assert(app_config.pin_switch_delay_us == 500);
+    assert(strcmp(app_config.adc_device, "/dev/adc0") == 0);
+    assert(app_config.adc_threshold == 200);
+}
+
 static void test_enabled_mp4_still_parses(void) {
     load("mp4:\n  enable: true\n  width: 3840\n  height: 2160\n"
          "  fps: 20\n  bitrate: 1024\n"
@@ -134,6 +204,10 @@ int main(void) {
     test_disabled_jpeg_keeps_params();
     test_missing_mp4_section_uses_defaults_not_zero();
     test_disabled_mp4_survives_save_reload();
+    test_disabled_http_post_keeps_params();
+    test_disabled_http_post_survives_save_reload();
+    test_disabled_audio_keeps_params();
+    test_disabled_night_mode_keeps_params();
     test_enabled_mp4_still_parses();
     if (*conf_path) {
         char bak[PATH_MAX];

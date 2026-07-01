@@ -389,31 +389,30 @@ enum ConfigError app_config_parse(void) {
     err =
         parse_bool(&ini, "night_mode", "enable", &app_config.night_mode_enable);
     #define PIN_MAX 95
-    if (app_config.night_mode_enable) {
-        parse_int(
-            &ini, "night_mode", "ir_sensor_pin", 0, PIN_MAX,
-            &app_config.ir_sensor_pin);
-        parse_int(
-            &ini, "night_mode", "check_interval_s", 0, 600,
-            &app_config.check_interval_s);
-        parse_int(
-            &ini, "night_mode", "ir_cut_pin1", 0, PIN_MAX,
-            &app_config.ir_cut_pin1);
-        parse_int(
-            &ini, "night_mode", "ir_cut_pin2", 0, PIN_MAX,
-            &app_config.ir_cut_pin2);
-        parse_int(
-            &ini, "night_mode", "ir_led_pin", 0, PIN_MAX,
-            &app_config.ir_led_pin);
-        parse_int(
-            &ini, "night_mode", "pin_switch_delay_us", 0, 1000,
-            &app_config.pin_switch_delay_us);
-        parse_param_value(
-            &ini, "night_mode", "adc_device", app_config.adc_device);
-        parse_int(
-            &ini, "night_mode", "adc_threshold", INT_MIN, INT_MAX,
-            &app_config.adc_threshold);
-    }
+    /* Parse even when disabled so configured values survive; fatal only if enabled. */
+    parse_int(
+        &ini, "night_mode", "ir_sensor_pin", 0, PIN_MAX,
+        &app_config.ir_sensor_pin);
+    parse_int(
+        &ini, "night_mode", "check_interval_s", 0, 600,
+        &app_config.check_interval_s);
+    parse_int(
+        &ini, "night_mode", "ir_cut_pin1", 0, PIN_MAX,
+        &app_config.ir_cut_pin1);
+    parse_int(
+        &ini, "night_mode", "ir_cut_pin2", 0, PIN_MAX,
+        &app_config.ir_cut_pin2);
+    parse_int(
+        &ini, "night_mode", "ir_led_pin", 0, PIN_MAX,
+        &app_config.ir_led_pin);
+    parse_int(
+        &ini, "night_mode", "pin_switch_delay_us", 0, 1000,
+        &app_config.pin_switch_delay_us);
+    parse_param_value(
+        &ini, "night_mode", "adc_device", app_config.adc_device);
+    parse_int(
+        &ini, "night_mode", "adc_threshold", INT_MIN, INT_MAX,
+        &app_config.adc_threshold);
 
     err = parse_bool(&ini, "isp", "mirror", &app_config.mirror);
     if (err != CONFIG_OK)
@@ -511,12 +510,11 @@ enum ConfigError app_config_parse(void) {
     stream_config_parse(&ini, &app_config);
 
     parse_bool(&ini, "audio", "enable", &app_config.audio_enable);
-    if (app_config.audio_enable) {
-        parse_int(&ini, "audio", "bitrate", 32, 320, &app_config.audio_bitrate);
-        parse_int(&ini, "audio", "gain", -60, 30, &app_config.audio_gain);
-        parse_int(&ini, "audio", "srate", 8000, 96000,
-            &app_config.audio_srate);
-    }
+    /* Parse even when disabled so configured values survive; fatal only if enabled. */
+    parse_int(&ini, "audio", "bitrate", 32, 320, &app_config.audio_bitrate);
+    parse_int(&ini, "audio", "gain", -60, 30, &app_config.audio_gain);
+    parse_int(&ini, "audio", "srate", 8000, 96000,
+        &app_config.audio_srate);
 
     parse_bool(&ini, "mp4", "enable", &app_config.mp4_enable);
     /* Parse the params even when the stream is disabled, so a disabled stream
@@ -616,45 +614,44 @@ enum ConfigError app_config_parse(void) {
     parse_int(&ini, "mjpeg", "qfactor", 0, 99, &app_config.mjpeg_qfactor);
 
     parse_bool(&ini, "http_post", "enable", &app_config.http_post_enable);
-    if (app_config.http_post_enable) {
-        err = parse_param_value(
-            &ini, "http_post", "host", app_config.http_post_host);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_param_value(
-            &ini, "http_post", "url", app_config.http_post_url);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
+    /* Parse even when disabled so configured values survive; fatal only if enabled. */
+    err = parse_param_value(
+        &ini, "http_post", "host", app_config.http_post_host);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
+    err = parse_param_value(
+        &ini, "http_post", "url", app_config.http_post_url);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
 
-        err = parse_param_value(
-            &ini, "http_post", "login", app_config.http_post_login);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_param_value(
-            &ini, "http_post", "password", app_config.http_post_password);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
+    err = parse_param_value(
+        &ini, "http_post", "login", app_config.http_post_login);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
+    err = parse_param_value(
+        &ini, "http_post", "password", app_config.http_post_password);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
 
-        err = parse_int(
-            &ini, "http_post", "width", 160, INT_MAX,
-            &app_config.http_post_width);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "http_post", "height", 120, INT_MAX,
-            &app_config.http_post_height);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "http_post", "interval", 1, INT_MAX,
-            &app_config.http_post_interval);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "http_post", "qfactor", 1, 99, &app_config.http_post_qfactor);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-    }
+    err = parse_int(
+        &ini, "http_post", "width", 160, INT_MAX,
+        &app_config.http_post_width);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
+    err = parse_int(
+        &ini, "http_post", "height", 120, INT_MAX,
+        &app_config.http_post_height);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
+    err = parse_int(
+        &ini, "http_post", "interval", 1, INT_MAX,
+        &app_config.http_post_interval);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
+    err = parse_int(
+        &ini, "http_post", "qfactor", 1, 99, &app_config.http_post_qfactor);
+    if (err != CONFIG_OK && app_config.http_post_enable)
+        goto RET_ERR;
 
     free(ini.str);
     return CONFIG_OK;
