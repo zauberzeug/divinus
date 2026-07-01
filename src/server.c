@@ -1181,9 +1181,20 @@ void respond_request(http_request_t *req) {
                         app_config.mp4_profile = HAL_VIDPROFILE_MAIN;
                     else if (EQUALS_CASE(value, "HP") || EQUALS_CASE(value, "HIGH"))
                         app_config.mp4_profile = HAL_VIDPROFILE_HIGH;
+                } else if (EQUALS(key, "min_qual")) {
+                    if (parse_api_int(value, 0, 51, &v))
+                        app_config.mp4_min_qual = v;
+                } else if (EQUALS(key, "max_qual")) {
+                    if (parse_api_int(value, 0, 51, &v))
+                        app_config.mp4_max_qual = v;
                 }
             }
 
+            if (app_config.mp4_min_qual > app_config.mp4_max_qual) {
+                unsigned int tmp = app_config.mp4_min_qual;
+                app_config.mp4_min_qual = app_config.mp4_max_qual;
+                app_config.mp4_max_qual = tmp;
+            }
             media_mp4_disable();
             if (app_config.mp4_enable) media_mp4_enable();
             refresh_sensor_rate();
@@ -1212,9 +1223,11 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"enable\":%s,\"width\":%d,\"height\":%d,\"fps\":%d,\"gop\":%d,"
-            "\"h265\":%s,\"mode\":\"%s\",\"profile\":\"%s\",\"bitrate\":%d}",
+            "\"h265\":%s,\"mode\":\"%s\",\"profile\":\"%s\",\"bitrate\":%d,"
+            "\"min_qual\":%d,\"max_qual\":%d}",
             app_config.mp4_enable ? "true" : "false", app_config.mp4_width, app_config.mp4_height,
-            app_config.mp4_fps, app_config.mp4_gop, h265, mode, profile, app_config.mp4_bitrate);
+            app_config.mp4_fps, app_config.mp4_gop, h265, mode, profile, app_config.mp4_bitrate,
+            app_config.mp4_min_qual, app_config.mp4_max_qual);
         send_and_close(req->clntFd, response, respLen);
         return;
     }

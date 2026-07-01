@@ -736,8 +736,8 @@ int media_mp4_enable(void) {
         config.framerate = app_config.mp4_fps;
         config.bitrate = app_config.mp4_bitrate;
         config.maxBitrate = app_config.mp4_bitrate * 5 / 4;
-        config.minQual = 34;
-        config.maxQual = 48;
+        config.minQual = app_config.mp4_min_qual;
+        config.maxQual = app_config.mp4_max_qual;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)

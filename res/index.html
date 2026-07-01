@@ -777,6 +777,14 @@
 									<option value="HP">High</option>
 								</select></td>
 							</tr>
+							<tr>
+								<td><label for="mp4_min_qual" title="H.26x quantization-parameter lower bound for VBR/AVBR/QP (inclusive). Lower QP = better quality and more bits; the rate controller is clamped to [min, max] and may not pick a QP below this even when bitrate is available. HEVC range 0-51; 18-22 is visually MJPEG-like, 34 is the soft legacy default.">Quality&nbsp;min&nbsp;(QP)</label></td>
+								<td><input type="number" id="mp4_min_qual" min="0" max="51"></td>
+							</tr>
+							<tr>
+								<td><label for="mp4_max_qual" title="H.26x quantization-parameter upper bound for VBR/AVBR/QP (inclusive). Highest (worst) QP the rate controller may use to protect the bitrate budget on hard scenes. Set equal to min for a constant QP. HEVC range 0-51.">Quality&nbsp;max&nbsp;(QP)</label></td>
+								<td><input type="number" id="mp4_max_qual" min="0" max="51"></td>
+							</tr>
 						</table>
 						<a href="javascript:apiApply('mp4')" class="btn right">Apply</a>
 					</fieldset>
