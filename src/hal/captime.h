@@ -28,11 +28,12 @@ bool captime_from_pts(unsigned long long pts_us, unsigned long long mono_raw_now
                       unsigned long long real_now_us, const captime_calib *cal,
                       unsigned long long *out_capture_us);
 
-/* Measured on zz-cam-005 (2026-06-15, SSC30KQ+IMX335): the SigmaStar
-   MI_SYS PTS clock is CLOCK_MONOTONIC_RAW to within ~7 µs, so the offset is 0.
-   (The PRs' "~430 ms ahead" was the slewed CLOCK_MONOTONIC, which diverges
-   from RAW with uptime — hence RAW here.) The age ceiling backstops garbage:
-   the PTS-to-callback age is pipeline-bound (measured 5–17 ms, near-independent
+/* Measured 2026-06-15 on a SigmaStar SSC30KQ with an IMX335 sensor: the
+   MI_SYS PTS clock is CLOCK_MONOTONIC_RAW to within ~7 µs, so the offset is 0
+   there (re-measure on other hardware). An earlier reading of "~430 ms ahead"
+   was taken against the slewed CLOCK_MONOTONIC, which diverges from RAW with
+   uptime — hence RAW here. The age ceiling backstops garbage: the
+   PTS-to-callback age is pipeline-bound (measured 5–17 ms, near-independent
    of frame rate), so 1 s comfortably clears the slowest config (3 fps floor)
    plus startup transients while still rejecting a stale/uninitialised PTS or a
    gross miscalibration. */
