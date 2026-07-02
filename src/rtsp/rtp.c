@@ -396,11 +396,10 @@ static inline int __rtcp_poll(struct list_t *e, void *v)
             return SUCCESS;
         }
 
-        /* postcondition check */
-        DASSERT(con->trans[*track_id].rtcp_tick == 
+        /* postcondition check: the SR resets only the interval timer; the
+           packet/octet counters stay cumulative across SRs. */
+        DASSERT(con->trans[*track_id].rtcp_tick ==
             con->trans[*track_id].rtcp_tick_org, return FAILURE);
-        DASSERT(con->trans[*track_id].rtcp_packet_cnt == 0, return FAILURE);
-        DASSERT(con->trans[*track_id].rtcp_octet == 0, return FAILURE);
     }
 
     return SUCCESS;

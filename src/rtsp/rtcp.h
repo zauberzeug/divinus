@@ -23,7 +23,6 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
 {
     unsigned int ntp_sec, ntp_frac, rtp_ts;
     int send_bytes;
-    struct sockaddr_in to_addr;
     transport_t *t;
 
     ASSERT(track_id >= 0 &&
@@ -97,17 +96,17 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
             ERR("send (interleaved):%d:%s\n", send_bytes, strerror(errno));
             return FAILURE;}));
     } else {
-        to_addr = con->addr;
-        to_addr.sin_port = htons(t->client_port_rtcp);
-
+        /* server_rtcp_fd is connect()ed to the client's RTCP port at SETUP,
+           so a plain send() reaches the right peer. */
         ASSERT((send_bytes = send(t->server_rtcp_fd,
             &(rtcp), RTCP_SR_NORB_BYTES, 0)) == (int)RTCP_SR_NORB_BYTES, ({
                     ERR("send:%d:%s\n", send_bytes, strerror(errno));
                     return FAILURE;}));
     }
 
-    t->rtcp_packet_cnt = 0;
-    t->rtcp_octet = 0;
+    /* psent/osent are cumulative totals since transmission start (RFC 3550
+       6.4.1); receivers difference consecutive SRs to compute loss and rate,
+       so the counters must never reset here — only the SR-interval timer does. */
     t->rtcp_tick = t->rtcp_tick_org;
 
     return SUCCESS;
