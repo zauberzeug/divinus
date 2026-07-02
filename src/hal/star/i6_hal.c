@@ -231,6 +231,24 @@ int i6_config_load(char *path)
 
 int _i6_level3dnr = 1;
 
+/* Adapt one vendor resolution into the normalised table for sensor_mode_pick;
+   reads _i6_snr_index set at the top of i6_pipeline_create. */
+static int i6_snr_query(int index, sensor_mode *out)
+{
+    i6_snr_res resolution;
+    int ret = i6_snr.fnGetResolution(_i6_snr_index, index, &resolution);
+    if (ret)
+        return ret;
+    strncpy(out->desc, resolution.desc, sizeof(out->desc) - 1);
+    out->crop_width = resolution.crop.width;
+    out->crop_height = resolution.crop.height;
+    out->out_width = resolution.output.width;
+    out->out_height = resolution.output.height;
+    out->max_fps = resolution.maxFps;
+    out->min_fps = resolution.minFps;
+    return 0;
+}
+
 int i6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile)
 {
     int ret;
@@ -241,7 +259,6 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
 
     {
         unsigned int count;
-        i6_snr_res resolution;
         if (ret = i6_snr.fnSetPlaneMode(_i6_snr_index, 0))
             return ret;
 
@@ -255,48 +272,13 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
 
         if (ret = i6_snr.fnGetResolutionCount(_i6_snr_index, &count))
             return ret;
-        if (count > SENSOR_MODE_MAX)
-            count = SENSOR_MODE_MAX;
 
-        // fnGetResolution corrupts the pipeline when queried past the index that
-        // is ultimately applied, so the table is built by querying ascending and
-        // stopping the moment sensor_mode_select commits to an index.
-        int forced = profile >= 0 && profile < (int)count;
-        int limit = forced ? profile : (int)count - 1;
-        // Off the stack: this bring-up runs on a small SDK thread stack and the
-        // table is ~1.4 KB; a stack copy corrupts the pipeline (sensor switches
-        // but the VPE never feeds the encoder). One bring-up at a time, so static
-        // is safe while sdk_start is the single caller of pipeline creation.
-        static sensor_mode modes[SENSOR_MODE_MAX];
-        sensor_mode_choice choice = { .index = -1, .fps = framerate };
-        for (int i = 0; i <= limit; i++) {
-            if (ret = i6_snr.fnGetResolution(_i6_snr_index, i, &resolution))
-                return ret;
-            sensor_mode *m = &modes[i];
-            memset(m, 0, sizeof(*m));
-            strncpy(m->desc, resolution.desc, sizeof(m->desc) - 1);
-            m->crop_width = resolution.crop.width;
-            m->crop_height = resolution.crop.height;
-            m->out_width = resolution.output.width;
-            m->out_height = resolution.output.height;
-            m->max_fps = resolution.maxFps;
-            m->min_fps = resolution.minFps;
-            if (!forced) {
-                choice = sensor_mode_select(-1, modes, i + 1, width, height, framerate);
-                if (choice.index >= 0)
-                    break;
-            }
-        }
-        if (forced)
-            choice = sensor_mode_select(profile, modes, limit + 1, width, height, framerate);
-        if (choice.index < 0)
-            return EXIT_FAILURE;
-
+        sensor_mode_choice choice;
+        if (ret = sensor_mode_pick("i6_snr", i6_snr_query, count, profile,
+            width, height, framerate, &choice))
+            return ret;
         _i6_snr_profile = choice.index;
         _i6_snr_framerate = choice.fps;
-        HAL_INFO("i6_snr", "selected profile %d (%s) for request %dx%d@%d -> %u fps\n",
-            _i6_snr_profile, modes[_i6_snr_profile].desc, width, height,
-            framerate, _i6_snr_framerate);
     }
 
     if (ret = i6_snr.fnSetOrientation(_i6_snr_index, mirror, flip))

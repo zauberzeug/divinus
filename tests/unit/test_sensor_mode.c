@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "hal/sensor_mode.h"
 
@@ -118,6 +119,90 @@ static void test_select_empty_table(void) {
     assert(c.index < 0);
 }
 
+/* Fake vendor query backed by the parsed sample table, cycling by modulo so
+   the clamp test can walk past the four real modes. Records the highest index
+   queried to assert the ascending-and-stop enumeration sensor_mode_pick must
+   honor (querying a mode it does not then apply corrupts the real pipeline). */
+static sensor_mode fake_table[SENSOR_MODE_MAX];
+static int fake_count;
+static int fake_max_queried;
+static int fake_fail_at;   /* index that returns an error; -1 = never */
+
+static void fake_reset(void) {
+    fake_count = load_modes(fake_table);
+    fake_max_queried = -1;
+    fake_fail_at = -1;
+}
+
+static int fake_query(int index, sensor_mode *out) {
+    fake_max_queried = index;
+    if (index == fake_fail_at)
+        return 7;  /* distinctive vendor-style error code */
+    *out = fake_table[index % fake_count];
+    return 0;
+}
+
+/* Auto pick stops at the first fitting mode and never queries past it. */
+static void test_pick_auto_stops_at_first_fit(void) {
+    fake_reset();
+    sensor_mode_choice c;
+    int ret = sensor_mode_pick("t", fake_query, fake_count, -1, 1440, 1080, 30, &c);
+    assert(ret == 0);
+    assert(c.index == 0 && c.fps == 30);
+    assert(fake_max_queried == 0);
+}
+
+/* Auto pick walks ascending until a mode satisfies the request. */
+static void test_pick_auto_walks_to_higher_mode(void) {
+    fake_reset();
+    sensor_mode_choice c;
+    int ret = sensor_mode_pick("t", fake_query, fake_count, -1, 1920, 1080, 120, &c);
+    assert(ret == 0);
+    assert(c.index == 3 && c.fps == 120);
+    assert(fake_max_queried == 3);
+}
+
+/* A forced profile queries only up to that index and caps fps to its ceiling. */
+static void test_pick_forced_queries_to_index_and_caps_fps(void) {
+    fake_reset();
+    sensor_mode_choice c;
+    int ret = sensor_mode_pick("t", fake_query, fake_count, 3, 1920, 1080, 240, &c);
+    assert(ret == 0);
+    assert(c.index == 3 && c.fps == 120);  /* capped to mode 3's max */
+    assert(fake_max_queried == 3);
+}
+
+/* A query error is returned verbatim and aborts enumeration at that index. */
+static void test_pick_query_error_propagates(void) {
+    fake_reset();
+    fake_fail_at = 2;
+    sensor_mode_choice c = { .index = 0, .fps = 0 };
+    int ret = sensor_mode_pick("t", fake_query, fake_count, -1, 1920, 1080, 120, &c);
+    assert(ret == 7);
+    assert(fake_max_queried == 2);
+}
+
+/* count above SENSOR_MODE_MAX is clamped; a no-fit request walks the clamped
+   range and fails without indexing out of bounds. */
+static void test_pick_clamps_count(void) {
+    fake_reset();
+    sensor_mode_choice c;
+    int ret = sensor_mode_pick("t", fake_query, 1000, -1, 9999, 9999, 30, &c);
+    assert(ret == EXIT_FAILURE);
+    assert(fake_max_queried == SENSOR_MODE_MAX - 1);
+}
+
+/* An out-of-range forced profile falls back to first-fit without querying the
+   bogus index. */
+static void test_pick_forced_out_of_range_first_fit(void) {
+    fake_reset();
+    sensor_mode_choice c;
+    int ret = sensor_mode_pick("t", fake_query, fake_count, 10, 1440, 1080, 30, &c);
+    assert(ret == 0);
+    assert(c.index == 0);
+    assert(fake_max_queried == 0);
+}
+
 int main(void) {
     test_parse_proc_extracts_only_resolution_rows();
     test_parse_proc_caps_at_max();
@@ -128,6 +213,12 @@ int main(void) {
     test_select_forced_caps_fps();
     test_select_forced_out_of_range_falls_back();
     test_select_empty_table();
+    test_pick_auto_stops_at_first_fit();
+    test_pick_auto_walks_to_higher_mode();
+    test_pick_forced_queries_to_index_and_caps_fps();
+    test_pick_query_error_propagates();
+    test_pick_clamps_count();
+    test_pick_forced_out_of_range_first_fit();
 
     /* Smoke the logger on the parsed table under ASan/UBSan (catches desc
        overread / bad format). */

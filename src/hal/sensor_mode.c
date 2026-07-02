@@ -2,6 +2,8 @@
 
 #include "macros.h"
 
+#include <stdlib.h>
+
 int sensor_mode_parse_proc(const char *text, sensor_mode *modes, int max)
 {
     int count = 0;
@@ -78,6 +80,48 @@ sensor_mode_choice sensor_mode_select(int profile, const sensor_mode *modes,
         break;
     }
     return choice;
+}
+
+int sensor_mode_pick(const char *mod, sensor_mode_query query,
+    unsigned int count, int profile, unsigned short req_width,
+    unsigned short req_height, unsigned int req_fps,
+    sensor_mode_choice *choice)
+{
+    if (count > SENSOR_MODE_MAX)
+        count = SENSOR_MODE_MAX;
+
+    // fnGetResolution corrupts the pipeline when queried past the index that
+    // is ultimately applied, so the table is built by querying ascending and
+    // stopping the moment sensor_mode_select commits to an index.
+    int forced = profile >= 0 && profile < (int)count;
+    int limit = forced ? profile : (int)count - 1;
+    // Off the stack: bring-up runs on a small SDK thread stack and the table
+    // is ~1.4 KB; a stack copy corrupts the pipeline (sensor switches but the
+    // VPE never feeds the encoder). One bring-up at a time — sdk_start is the
+    // single caller of pipeline creation — so a shared static is safe.
+    static sensor_mode modes[SENSOR_MODE_MAX];
+    sensor_mode_choice c = { .index = -1, .fps = req_fps };
+    for (int i = 0; i <= limit; i++) {
+        sensor_mode *m = &modes[i];
+        memset(m, 0, sizeof(*m));
+        int ret = query(i, m);
+        if (ret)
+            return ret;
+        if (!forced) {
+            c = sensor_mode_select(-1, modes, i + 1, req_width, req_height, req_fps);
+            if (c.index >= 0)
+                break;
+        }
+    }
+    if (forced)
+        c = sensor_mode_select(profile, modes, limit + 1, req_width, req_height, req_fps);
+    if (c.index < 0)
+        return EXIT_FAILURE;
+
+    *choice = c;
+    HAL_INFO(mod, "selected profile %d (%s) for request %ux%u@%u -> %u fps\n",
+        c.index, modes[c.index].desc, req_width, req_height, req_fps, c.fps);
+    return 0;
 }
 
 static sensor_mode cached_modes[SENSOR_MODE_MAX];

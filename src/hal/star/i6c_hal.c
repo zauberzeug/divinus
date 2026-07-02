@@ -229,6 +229,24 @@ int i6c_config_load(char *path)
 
 extern int _i6_level3dnr;
 
+/* See i6_snr_query in i6_hal.c: adapt one vendor resolution for
+   sensor_mode_pick, reading _i6c_snr_index set in i6c_pipeline_create. */
+static int i6c_snr_query(int index, sensor_mode *out)
+{
+    i6c_snr_res resolution;
+    int ret = i6c_snr.fnGetResolution(_i6c_snr_index, index, &resolution);
+    if (ret)
+        return ret;
+    strncpy(out->desc, resolution.desc, sizeof(out->desc) - 1);
+    out->crop_width = resolution.crop.width;
+    out->crop_height = resolution.crop.height;
+    out->out_width = resolution.output.width;
+    out->out_height = resolution.output.height;
+    out->max_fps = resolution.maxFps;
+    out->min_fps = resolution.minFps;
+    return 0;
+}
+
 int i6c_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile)
 {
     int ret;
@@ -238,49 +256,22 @@ int i6c_pipeline_create(char index, short width, short height, char mirror, char
 
     {
         unsigned int count;
-        i6c_snr_res resolution;
         if (ret = i6c_snr.fnSetPlaneMode(_i6c_snr_index, 0))
             return ret;
 
         if (ret = i6c_snr.fnGetResolutionCount(_i6c_snr_index, &count))
             return ret;
-        if (count > SENSOR_MODE_MAX)
-            count = SENSOR_MODE_MAX;
 
-        // fnGetResolution corrupts the pipeline when queried past the index that
-        // is ultimately applied, so the table is built by querying ascending and
-        // stopping the moment sensor_mode_select commits to an index.
-        int forced = profile >= 0 && profile < (int)count;
-        int limit = forced ? profile : (int)count - 1;
-        // Off the stack (see i6_hal.c): ~1.4 KB on a small SDK bring-up stack
-        // corrupts the pipeline. One bring-up at a time, so static is safe.
-        static sensor_mode modes[SENSOR_MODE_MAX];
-        sensor_mode_choice choice = { .index = -1, .fps = framerate };
-        for (int i = 0; i <= limit; i++) {
-            if (ret = i6c_snr.fnGetResolution(_i6c_snr_index, i, &resolution))
-                return ret;
-            sensor_mode *m = &modes[i];
-            memset(m, 0, sizeof(*m));
-            strncpy(m->desc, resolution.desc, sizeof(m->desc) - 1);
-            m->crop_width = resolution.crop.width;
-            m->crop_height = resolution.crop.height;
-            m->out_width = resolution.output.width;
-            m->out_height = resolution.output.height;
-            m->max_fps = resolution.maxFps;
-            m->min_fps = resolution.minFps;
-            if (!forced) {
-                choice = sensor_mode_select(-1, modes, i + 1, width, height, framerate);
-                if (choice.index >= 0)
-                    break;
-            }
-        }
-        if (forced && profile > 0)
+        // Non-default modes are unverified on i6c: the i6 linear-mode gate and
+        // the Disable/Enable bracket are not applied here, so a forced mode may
+        // silently stay in the sensor's default. Warn but honor the request.
+        if (profile > 0)
             HAL_WARNING("i6c_snr", "forced profile %d requested: non-default modes are unverified on i6c and the sensor may stay in default mode\n", profile);
-        if (forced)
-            choice = sensor_mode_select(profile, modes, limit + 1, width, height, framerate);
-        if (choice.index < 0)
-            return EXIT_FAILURE;
 
+        sensor_mode_choice choice;
+        if (ret = sensor_mode_pick("i6c_snr", i6c_snr_query, count, profile,
+            width, height, framerate, &choice))
+            return ret;
         _i6c_snr_profile = choice.index;
         if (ret = i6c_snr.fnSetResolution(_i6c_snr_index, _i6c_snr_profile))
             return ret;

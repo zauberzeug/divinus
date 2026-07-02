@@ -41,6 +41,21 @@ sensor_mode_choice sensor_mode_select(int profile, const sensor_mode *modes,
     int count, unsigned short req_width, unsigned short req_height,
     unsigned int req_fps);
 
+/* Query one enumerated sensor mode by ascending index into *out (zeroed
+   before the call). Returns 0 on success or the vendor error code. */
+typedef int (*sensor_mode_query)(int index, sensor_mode *out);
+
+/* Enumerate the vendor mode table through query and pick a mode for the
+   request (sensor_mode_select semantics: profile forces an index, otherwise
+   first-fit). The table is queried ascending and stops at the index that is
+   committed, because querying a mode that is not then applied corrupts the
+   pipeline. Logs the pick under mod. Returns 0 with *choice filled, the
+   query's error verbatim, or EXIT_FAILURE when no mode fits. */
+int sensor_mode_pick(const char *mod, sensor_mode_query query,
+    unsigned int count, int profile, unsigned short req_width,
+    unsigned short req_height, unsigned int req_fps,
+    sensor_mode_choice *choice);
+
 /* Parse a SigmaStar /proc/mi_modules/mi_sensor/mi_sensorN dump into modes[],
    keeping only the resolution rows (desc like "WxH@Ffps" followed by the crop/
    output/fps columns). The vendor fnGetResolution call can't enumerate the
