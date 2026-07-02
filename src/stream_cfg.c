@@ -109,8 +109,11 @@ void stream_config_write(FILE *file, const struct AppConfig *cfg) {
 }
 
 void stream_config_parse(struct IniConfig *ini, struct AppConfig *cfg) {
+    /* Parse every field regardless of enable: stream_config_write emits
+       udp_srcport and dest with no enable guard, so a disabled section must
+       still round-trip them — otherwise disabling the push and saving loses the
+       configured destination on the next load. */
     parse_bool(ini, "stream", "enable", &cfg->stream_enable);
-    if (!cfg->stream_enable) return;
 
     int val;
     if (parse_int(ini, "stream", "udp_srcport", 0, USHRT_MAX, &val) == CONFIG_OK)
@@ -118,5 +121,9 @@ void stream_config_parse(struct IniConfig *ini, struct AppConfig *cfg) {
 
     unsigned int count = 0;
     parse_list(ini, "stream", "dest", STREAM_DEST_SLOTS, &count, cfg->stream_dests);
-    *cfg->stream_dests[count] = '\0';
+    /* NUL the slot after the last entry as a sentinel — but only if there is
+       one: a fully populated list leaves count == STREAM_DEST_SLOTS, and
+       stream_dests[STREAM_DEST_SLOTS] is past the array. */
+    if (count < (unsigned)STREAM_DEST_SLOTS)
+        *cfg->stream_dests[count] = '\0';
 }
