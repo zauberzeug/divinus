@@ -1,4 +1,5 @@
 #include "server.h"
+#include "h26x_gate.h"
 #include "sock_send.h"
 #include "stream_cfg.h"
 #include "hal/captime.h"
@@ -30,6 +31,9 @@
 /* One log line (not one per frame) once an MJPEG client has been skipped
    this many frames in a row */
 #define MJPEG_SKIP_LOG_THRESHOLD 100
+/* Same idea for an H26x client repeatedly resynced to a keyframe because it
+   cannot keep up with the stream bitrate */
+#define H26X_RESYNC_LOG_THRESHOLD 100
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -60,6 +64,7 @@ struct {
     struct Mp4State mp4;
     unsigned int nalCnt;
     unsigned int skipCnt;
+    bool waiting_key;
 } client_fds[HTTP_MAX_CLIENTS];
 
 typedef struct {
@@ -242,6 +247,7 @@ static bool register_stream_client(int sockFd, enum StreamType type,
         client_fds[i].type = type;
         client_fds[i].nalCnt = 0;
         client_fds[i].skipCnt = 0;
+        client_fds[i].waiting_key = true;
         client_fds[i].mp4.header_sent = false;
         if (type == STREAM_MP4)
             mp4_clients++;
@@ -262,39 +268,69 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
     for (unsigned int i = 0; i < stream->count; ++i) {
         hal_vidpack *pack = &stream->pack[i];
         unsigned char *pack_data = pack->data + pack->offset;
+        /* The iovec/len_buf arrays below are sized to the nalu[] bound; never
+           trust the vendor count past it. */
+        int naluCnt = pack->naluCnt;
+        if (naluCnt > (int)(sizeof(pack->nalu) / sizeof(pack->nalu[0])))
+            naluCnt = (int)(sizeof(pack->nalu) / sizeof(pack->nalu[0]));
 
         pthread_mutex_lock(&client_fds_mutex);
         for (unsigned int c = 0; c < HTTP_MAX_CLIENTS; ++c) {
             if (client_fds[c].sockFd < 0) continue;
             if (client_fds[c].type != STREAM_H26X) continue;
 
-            for (int j = 0; j < pack->naluCnt; j++) {
-                if (client_fds[c].nalCnt == 0 &&
-                    pack->nalu[j].type != NalUnitType_SPS &&
-                    pack->nalu[j].type != NalUnitType_SPS_HEVC)
+            int resume_index = 0;
+            if (client_fds[c].waiting_key) {
+                resume_index = h26x_resume_index(pack->nalu, naluCnt);
+                if (resume_index < 0)
                     continue;
+            }
 
-                char len_buf[16];
-                int len_size = sprintf(len_buf, "%X\r\n", pack->nalu[j].length);
+            char len_buf[8][16];
+            struct iovec iov[8 * 3];
+            int iovcnt = 0;
+            int len_idx = 0;
+            for (int j = resume_index; j < naluCnt; j++) {
+                int len_size = snprintf(len_buf[len_idx], sizeof(len_buf[len_idx]),
+                    "%X\r\n", pack->nalu[j].length);
+                if (len_size <= 0 || len_size >= (int)sizeof(len_buf[len_idx]))
+                    continue;
+                iov[iovcnt++] = (struct iovec){.iov_base = len_buf[len_idx], .iov_len = (size_t)len_size};
+                iov[iovcnt++] = (struct iovec){
+                    .iov_base = pack_data + pack->nalu[j].offset,
+                    .iov_len = pack->nalu[j].length
+                };
+                iov[iovcnt++] = (struct iovec){.iov_base = (void *)"\r\n", .iov_len = 2};
+                len_idx++;
+            }
+            if (!iovcnt)
+                continue;
 
-                struct iovec iov[3];
-                iov[0].iov_base = len_buf;
-                iov[0].iov_len = len_size;
-                iov[1].iov_base = pack_data + pack->nalu[j].offset;
-                iov[1].iov_len = pack->nalu[j].length;
-                iov[2].iov_base = (void*)"\r\n";
-                iov[2].iov_len = 2;
+            /* One complete-or-skip send per AU (or AU tail after keyframe
+               resume) to prevent torn access units under backpressure. */
+            enum SockSendResult r =
+                sock_send_frame_or_skip(client_fds[c].sockFd, iov, iovcnt);
+            if (r == SOCK_SEND_SKIPPED) {
+                client_fds[c].waiting_key = true;
+                if (++client_fds[c].skipCnt == H26X_RESYNC_LOG_THRESHOLD)
+                    HAL_INFO("server", "H26x client %u is not keeping up, "
+                        "skipped %u access units in a row (waiting for a keyframe)\n",
+                        c, client_fds[c].skipCnt);
+                continue;
+            }
+            if (r == SOCK_SEND_DEAD) {
+                free_client(c);
+                continue;
+            }
 
-                if (sendv_to_client(c, iov, 3) < 0)
-                    break;
-
-                client_fds[c].nalCnt++;
-                if (client_fds[c].nalCnt == 300) {
-                    char end[] = "0\r\n\r\n";
-                    send_to_client(c, end, sizeof(end) - 1);
-                    free_client(c);
-                    break;
-                }
+            client_fds[c].waiting_key = false;
+            client_fds[c].skipCnt = 0;
+            client_fds[c].nalCnt += (unsigned int)(naluCnt - resume_index);
+            if (client_fds[c].nalCnt >= 300) {
+                char end[] = "0\r\n\r\n";
+                send_to_client(c, end, sizeof(end) - 1);
+                free_client(c);
+                continue;
             }
         }
         pthread_mutex_unlock(&client_fds_mutex);
@@ -806,6 +842,10 @@ void respond_request(http_request_t *req) {
 
     if ((!app_config.mp4_codecH265 && EQUALS(req->uri, "/video.264")) ||
         (app_config.mp4_codecH265 && EQUALS(req->uri, "/video.265"))) {
+        int sndbuf = HTTP_MJPEG_SNDBUF_SIZE;
+        if (setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0 &&
+            setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+            HAL_WARNING("server", "setsockopt(SO_SNDBUF) failed");
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/octet-stream\r\n"
