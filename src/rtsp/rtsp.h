@@ -81,6 +81,15 @@ typedef struct {
     int rtcp_tick_org;
     unsigned short rtp_seq;
     unsigned int rtp_timestamp;
+    /* 90 kHz RTP timestamp for the current access unit, derived from the vendor
+       PTS (the media clock); 0 means none, fall back to send-time millis(). */
+    unsigned int capture_ts90;
+    /* The most recent access unit's vendor PTS (µs) and absolute capture instant
+       (epoch µs, 0 = unknown). The RTCP Sender Report anchors its RTP-ts to the
+       PTS and its NTP wall-clock to the capture instant of this one frame, so
+       the pair a receiver reads describes the same time on the same clocks. */
+    unsigned long long capture_pts_us;
+    unsigned long long capture_us;
     char is_tcp;
     unsigned char channel_rtp;
     unsigned char channel_rtcp;
@@ -125,12 +134,14 @@ struct __rtsp_obj_t {
     bufpool_handle con_pool;
     bufpool_handle transfer_pool;
     unsigned short port;
+    unsigned int fps;          /* stream frame rate, for the ~1 s RTCP SR cadence */
     char isH265;
     unsigned char audioPt;
     mime_encoded_handle sprop_vps_b64;
     mime_encoded_handle sprop_sps_b64;
     mime_encoded_handle sprop_pps_b64;
     mime_encoded_handle sprop_sps_b16;
+    unsigned int sess_version; /* SDP o= version, bumped when sprops change */
     unsigned ctx; /* for rand_r */
     int con_num;
     unsigned char max_con;

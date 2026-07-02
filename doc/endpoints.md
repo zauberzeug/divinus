@@ -2,6 +2,10 @@
 
 This document describes the REST API endpoints available in Divinus' web server.
 
+> A machine-readable [OpenAPI 3.1 spec](openapi.yaml) is the authoritative
+> definition of this API (run `pixi run generate-api-docs` for an interactive view). See
+> the [documentation index](README.md) for tooling.
+
 ## General Response Format
 
 All APIs return responses in JSON format with appropriate HTTP status codes.
@@ -127,7 +131,7 @@ Configures the H.26x MP4 stream.
 | GET    | `width`    | Video width (px)                           |
 | GET    | `height`   | Video height (px)                          |
 | GET    | `fps`      | Frames per second                          |
-| GET    | `bitrate`  | Bits per second                            |
+| GET    | `bitrate`  | Bitrate in kbps                            |
 | GET    | `h265`     | Use H.265 instead of H.264                 |
 | GET    | `mode`     | Compression mode (CBR, VBR, QP, ABR, AVBR) |
 | GET    | `profile`  | Profile (BP/BASELINE, MP/MAIN, HP/HIGH)    |
@@ -155,7 +159,7 @@ Configures the audio parameters.
 | Method | Parameters | Description                   |
 |--------|------------|-------------------------------|
 | GET    | `enable`   | Enable/disable audio          |
-| GET    | `bitrate`  | Bits per second               |
+| GET    | `bitrate`  | Bitrate in kbps               |
 | GET    | `gain`     | Audio gain (dB amplification) |
 | GET    | `srate`    | Sample rate in Hz             |
 
@@ -268,6 +272,30 @@ Manages video recording operations.
   "filename": "Entrance.mp4",
   "segment_duration": 0,
   "segment_size": 10485760
+}
+```
+
+#### `/api/stream`
+
+Controls the raw RTP/UDP push stream (the `stream:` config block) at runtime —
+no reboot. Enabling with a destination starts the push live; disabling stops it.
+A POST persists only after `/api/cmd?save`.
+
+| Method | Parameters     | Description                                                   |
+|--------|----------------|---------------------------------------------------------------|
+| GET    | `enable`       | `true`/`1` or `false`/`0` — start or stop the push live       |
+| GET    | `dest`         | Primary destination `udp://host:port` (or a `224–239` mcast)  |
+| GET    | `udp_srcport`  | Local UDP source port (`0` = default `5600`)                  |
+
+A malformed `dest` is rejected and leaves the stored destination unchanged.
+
+**Response**
+```json
+{
+  "enable": true,
+  "udp_srcport": 5600,
+  "dest": "udp://192.168.1.50:5600",
+  "dests": ["udp://192.168.1.50:5600"]
 }
 ```
 

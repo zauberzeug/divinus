@@ -171,15 +171,26 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
 {
     char sdp[__RTSP_TCP_BUF_SIZE];
 
-    const char baseRtp[] =
+    /* o= session-version bumps whenever the parameter sets are invalidated
+       (encoder reconfig), so clients can tell the description changed. */
+    char baseRtp[160];
+    snprintf(baseRtp, sizeof(baseRtp),
         "v=0\r\n"
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "o=- 0 %u IN IP4 127.0.0.1\r\n"
         "s=librtsp\r\n"
         "c=IN IP4 0.0.0.0\r\n"
         "t=0 0\r\n"
-        "a=range:npt=0-\r\n";
+        "a=range:npt=0-\r\n", h->sess_version);
     char audioRtp[256] = "\r\n";
     char audioRtpfmt[16];
+
+    /* Advertise the per-frame abs-capture-time RTP header extension (RFC 8285
+       a=extmap) so a receiver knows the one-byte id to read it under. The id
+       MUST equal the one the sender writes on the wire (rtp.c). */
+    char extmap[96];
+    snprintf(extmap, sizeof(extmap),
+        "a=extmap:%u http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time\r\n",
+        CAPTIME_ABS_CAPTURE_EXT_ID);
 
     if (h->audioPt != 255) {
         switch (h->audioPt) {
@@ -199,26 +210,25 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
     }
 
     if (h->isH265 &&
-        h->sprop_vps_b64 && h->sprop_sps_b64 && h->sprop_sps_b16 && h->sprop_pps_b64) {
+        h->sprop_vps_b64 && h->sprop_sps_b64 && h->sprop_pps_b64) {
         DASSERT(h->sprop_vps_b64->result, return);
         DASSERT(h->sprop_sps_b64->result, return);
-        DASSERT(h->sprop_sps_b16->result, return);
         DASSERT(h->sprop_pps_b64->result, return);
 
         DBG("VPS BASE64:%s\n", h->sprop_vps_b64->result);
         DBG("SPS BASE64:%s\n", h->sprop_sps_b64->result);
-        DBG("SPS BASE16:%s\n", h->sprop_sps_b16->result);
         DBG("PPS BASE64:%s\n", h->sprop_pps_b64->result);
 
+        /* RFC 7798 7.1: separate sprop-vps/sps/pps parameters; H.265 has no
+           profile-level-id or packetization-mode (those are RFC 6184/H.264). */
         snprintf(sdp, __RTSP_TCP_BUF_SIZE- 1,
                 "%sm=video 0 RTP/AVP 96\r\n"
                 "a=control:track=0\r\n"
                 "a=rtpmap:96 H265/90000\r\n"
-                "a=fmtp:96 profile-level-id=%s;"
-                " packetization-mode=1;"
-                " sprop-parameter-sets=%s,%s,%s;%s",
+                "%s"
+                "a=fmtp:96 sprop-vps=%s; sprop-sps=%s; sprop-pps=%s%s",
                 baseRtp,
-                h->sprop_sps_b16->result,
+                extmap,
                 h->sprop_vps_b64->result,
                 h->sprop_sps_b64->result,
                 h->sprop_pps_b64->result,
@@ -237,10 +247,12 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
                 "%sm=video 0 RTP/AVP 96\r\n"
                 "a=control:track=0\r\n"
                 "a=rtpmap:96 H264/90000\r\n"
+                "%s"
                 "a=fmtp:96 profile-level-id=%s;"
                 " packetization-mode=1;"
                 " sprop-parameter-sets=%s,%s;%s",
                 baseRtp,
+                extmap,
                 h->sprop_sps_b16->result,
                 h->sprop_sps_b64->result,
                 h->sprop_pps_b64->result,
@@ -250,9 +262,11 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
                 "%sm=video 0 RTP/AVP 96\r\n"
                 "a=control:track=0\r\n"
                 "a=rtpmap:96 %s/90000\r\n"
+                "%s"
                 "a=fmtp:96 packetization-mode=1;%s",
                 baseRtp,
                 h->isH265 ? "H265" : "H264",
+                extmap,
                 audioRtp);
     }
 
@@ -341,7 +355,12 @@ static void __method_play(struct connection_item_t *p, rtsp_handle h)
         p->trans[p->track_id].au_pending = 1;
         p->trans[p->track_id].rtcp_octet = 0;
         p->trans[p->track_id].rtcp_packet_cnt = 0;
-        p->trans[p->track_id].rtcp_tick_org = 150; // TODO: must be variant
+        /* Send the SR roughly once per second (one AU's worth of frames), so the
+           NTP anchor refreshes fast enough that between-SR slew stays sub-ms;
+           __rtcp_poll decrements this once per access unit. Far under RFC 3550
+           §6.2's 5% RTCP bandwidth, and within its reduced-minimum at video
+           bitrates. Falls back to 30 when the rate is unknown. */
+        p->trans[p->track_id].rtcp_tick_org = h->fps ? (int)h->fps : 30;
         p->trans[p->track_id].rtcp_tick = p->trans[p->track_id].rtcp_tick_org;
 
         ASSERT(__rtcp_send_sr(p, p->track_id) == SUCCESS, return);
@@ -863,6 +882,27 @@ error:
 /******************************************************************************
  *              PUBLIC FUNCTIONS
  ******************************************************************************/
+void rtsp_clear_sprops(rtsp_handle h)
+{
+    /* Drop the cached VPS/SPS/PPS so the next DESCRIBE re-harvests them from the
+       current encoder config (call on any resolution/codec reconfig), and bump
+       the SDP session-version so clients see the description changed. */
+    if (!h)
+        return;
+
+    rtsp_lock(h);
+    mime_encoded_delete(h->sprop_vps_b64);
+    mime_encoded_delete(h->sprop_sps_b64);
+    mime_encoded_delete(h->sprop_sps_b16);
+    mime_encoded_delete(h->sprop_pps_b64);
+    h->sprop_vps_b64 = NULL;
+    h->sprop_sps_b64 = NULL;
+    h->sprop_sps_b16 = NULL;
+    h->sprop_pps_b64 = NULL;
+    h->sess_version++;
+    rtsp_unlock(h);
+}
+
 void rtsp_finish(rtsp_handle h)
 {
     /* close every connections in the handle */
@@ -893,7 +933,8 @@ void rtsp_finish(rtsp_handle h)
     return;
 }
 
-rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int priority)
+rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int priority,
+    unsigned int fps)
 {
     rtsp_handle       nh = NULL;
 
@@ -906,6 +947,7 @@ rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int priority)
     nh->audioPt = 255;
     nh->max_con = max_con;
     nh->port = port;
+    nh->fps = fps;
     nh->priority = priority;
 
     pthread_mutex_init(&nh->mutex,NULL);

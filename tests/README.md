@@ -48,3 +48,23 @@ and are run by hand before shipping any stream-path change.
 uv run tests/integration/test_streams.py <camera-ip>      # stream integrity
 uv run tests/integration/measure_latency.py <camera-ip>   # latency + cadence
 ```
+
+### `test_streams.py` run modes
+
+The suite has two groups: **stream-integrity** checks (MJPEG/RTSP/fMP4 +
+runtime UDP push) and **exposure** checks that drive fps/exposure/gain live.
+The exposure tests mutate sensor state, so they run only on request — verifying
+a HAL/stream change should not need them:
+
+```sh
+uv run .../test_streams.py <ip>                 # streams only (default; no exposure mutation)
+uv run .../test_streams.py <ip> all             # streams + exposure
+uv run .../test_streams.py <ip> exposure        # exposure tests only
+uv run .../test_streams.py <ip> --no-exposure   # explicit streams-only (== default)
+uv run .../test_streams.py <ip> rtsp-tcp fmp4-http   # explicit subset by test name
+```
+
+Each exposure test has a `try/finally` teardown (`restore_streaming`) that puts
+fps/exposure/gain back to a known-good state and confirms frames flow again,
+even when an assertion fails mid-run — so a failed exposure test no longer
+leaves the camera wedged ("Main stream loop timed out") for the next probe.

@@ -65,12 +65,17 @@
 		a.btn { display: inline-block; }
 		.btn.cell { display: table-cell; width: 1%; }
 
+		/* Toast */
+		#toast { position: fixed; left: 50%; bottom: 1em; transform: translateX(-50%); max-width: 90%; margin: 0; padding: 0.3em 0.6em; background: var(--menu-bg); color: #fff; border-radius: 2px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); font-size: 13px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; visibility: hidden; transition: opacity 0.2s; z-index: 30; }
+		#toast.show { opacity: 1; visibility: visible; }
 		/* Form inputs */
 		input, select { font-family: inherit; padding: 0.4em 0.6em; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text-color); transition: border-color 0.2s; }
 		input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(2,132,199,0.2); }
 		.box input, .box select { width: 100%; }
 		input[type=checkbox] { position: absolute; opacity: 0; }
 		input[type=checkbox]:checked + .modal { display: block; z-index: 14; }
+		input[type=checkbox].toggle { position: static; opacity: 1; width: auto; }
+		label[title] { cursor: help; border-bottom: 1px dotted var(--border); }
 		.color-input { height: 2em; border: none; }
 		.range-wrap { display: table; width: 100%; }
 		.range-val { display: table-cell; width: 3em; padding-right: 0.5em; text-align: left; vertical-align: middle; font-weight: 700; }
@@ -169,15 +174,114 @@
 
 		function apiApply(endp) {
 			var dest = "/api/" + endp + "?", req = new XMLHttpRequest();
-			var elems = document.getElementsByTagName('*');
+			var sent = {}, elems = document.getElementsByTagName('*');
 			for (var i = 0; i < elems.length; i++) {
 				if (!elems[i].id || elems[i].id.lastIndexOf(endp + '_', 0)) continue;
 				if (elems[i].type && elems[i].type == "file") continue;
-					dest += elems[i].id.substring(endp.length + 1) +
-						'=' + encodeURIComponent(elems[i].value) + '&';
+				var key = elems[i].id.substring(endp.length + 1);
+				sent[key] = elems[i].value;
+				dest += key + '=' + encodeURIComponent(elems[i].value) + '&';
 			}
 			dest = dest.slice(0, -1);
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(req.responseText);
+				var adjusted = [];
+				for (var key in dec) {
+					if (!dec.hasOwnProperty(key) || typeof dec[key] != 'number') continue;
+					if (!(key in sent) || sent[key] === '') continue;
+					if (Number(sent[key]) != dec[key])
+						adjusted.push(key + ' \u2192 ' + dec[key]);
+				}
+				applyFields(endp, dec);
+				if (adjusted.length)
+					showToast('Adjusted to valid range: ' + adjusted.join(', '));
+			};
 			req.open('GET', dest);
+			req.send();
+		}
+
+		function applyFields(endp, dec) {
+			for (var key in dec) {
+				if (!dec.hasOwnProperty(key)) continue;
+
+				var elem = document.getElementById(endp + '_' + key);
+				if (elem && elem.type && elem.type == "file") {
+					var lbls = document.getElementsByTagName('LABEL');
+					for (var i = 0; i < lbls.length; i++) {
+						if (lbls[i].htmlFor != endp + '_' + key) continue;
+						lbls[i].innerHTML = 'Region ' + dec[key];
+						break;
+					}
+					continue;
+				} else if (!elem) continue;
+
+				if (elem.tagName == 'INPUT') {
+					elem.value = dec[key];
+					if (elem.type == 'range') {
+						var valElem = document.getElementById(elem.id + '_val');
+						if (valElem) valElem.innerHTML = dec[key];
+					}
+					if (typeof updateOsdSummary === 'function' && (elem.id.indexOf('_text') > -1 || elem.id.indexOf('_img') > -1))
+						updateOsdSummary(elem.id);
+				} else if (elem.tagName == 'SELECT') {
+					for (var i = 0; i < elem.options.length; i++) {
+						if (elem.options[i].value == dec[key] + '') {
+							elem.selectedIndex = i;
+							break;
+						}
+					}
+				} else {
+					elem.innerHTML = dec[key];
+				}
+			}
+		}
+
+		function showToast(msg) {
+			var toast = document.getElementById('toast');
+			if (!toast) return;
+			toast.innerHTML = msg;
+			toast.className = 'show';
+			clearTimeout(showToast.timer);
+			showToast.timer = setTimeout(function() { toast.className = ''; }, 4000);
+		}
+
+		/* Toggle a stream on/off live, sending only enable= — leaves its other
+		   params untouched on the device (the server applies only the keys sent). */
+		function apiEnable(endp) {
+			var sel = document.getElementById(endp + '_enable');
+			if (!sel) return;
+			var req = new XMLHttpRequest();
+			req.open('GET', '/api/' + endp + '?enable=' + encodeURIComponent(sel.value));
+			req.send();
+		}
+
+		function readExposure() {
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(req.responseText);
+				var maxOn = dec.mode == 'max';
+				document.getElementById('exposure_max').checked = maxOn;
+				var inp = document.getElementById('exposure_exposure');
+				inp.disabled = maxOn;
+				/* auto reports the live AE shutter; keep the field at 0 so it
+				   reads as "auto" and re-applying doesn't pin it as fixed. */
+				inp.value = dec.mode == 'auto' ? 0 : dec.exposure;
+			};
+			req.open('GET', '/api/exposure');
+			req.send();
+		}
+
+		function applyExposure() {
+			var maxOn = document.getElementById('exposure_max').checked;
+			var us = document.getElementById('exposure_exposure').value;
+			var val = maxOn ? 'max' : (us === '' ? '0' : us);
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState == 4 && this.status == 200) readExposure();
+			};
+			req.open('GET', '/api/exposure?value=' + encodeURIComponent(val));
 			req.send();
 		}
 
@@ -186,39 +290,7 @@
 			req.onreadystatechange = function() {
 				if (this.readyState != 4 || this.status != 200) return false;
 				var dec = JSON.parse(req.responseText);
-				for (var key in dec) {
-					if (!dec.hasOwnProperty(key)) continue;
-
-					var elem = document.getElementById(endp + '_' + key);
-					if (elem && elem.type && elem.type == "file") {
-						var lbls = document.getElementsByTagName('LABEL');
-						for (var i = 0; i < lbls.length; i++) {
-							if (lbls[i].htmlFor != endp + '_' + key) continue;
-							lbls[i].innerHTML = 'Region ' + dec[key];
-							break;
-						}
-						continue;
-					} else if (!elem) continue;
-
-					if (elem.tagName == 'INPUT') {
-						elem.value = dec[key];
-						if (elem.type == 'range') {
-							var valElem = document.getElementById(elem.id + '_val');
-							if (valElem) valElem.innerHTML = dec[key];
-						}
-						if (typeof updateOsdSummary === 'function' && (elem.id.indexOf('_text') > -1 || elem.id.indexOf('_img') > -1))
-							updateOsdSummary(elem.id);
-					} else if (elem.tagName == 'SELECT') {
-						for (var i = 0; i < elem.options.length; i++) {
-							if (elem.options[i].value == dec[key] + '') {
-								elem.selectedIndex = i;
-								break;
-							}
-						}
-					} else {
-						elem.innerHTML = dec[key];
-					}
-				}
+				applyFields(endp, dec);
 			}
 			req.open('GET', '/api/' + endp);
 			req.send();
@@ -277,7 +349,7 @@
 
 		function saveAndRestart() {
 			if (!confirm('Save settings and restart? The stream will briefly disconnect.')) return;
-			apiApply('exposure');
+			applyExposure();
 			apiApply('gain');
 			apiApply('isp');
 			apiApply('mp4');
@@ -285,6 +357,7 @@
 			apiApply('jpeg');
 			apiApply('audio');
 			apiApply('record');
+			apiApply('stream');
 			setTimeout(function() {
 				saveConfig();
 				setTimeout(function() { restartApp(); }, 500);
@@ -383,7 +456,7 @@
 
 		function onLoad() {
 			apiRead('audio');
-			apiRead('exposure');
+			readExposure();
 			apiRead('gain');
 			apiRead('isp');
 			apiRead('jpeg');
@@ -392,7 +465,9 @@
 			apiRead('night');
 			apiRead('record');
 			toggleRecord(document.getElementById('record_state'));
+			apiRead('stream');
 			apiRead('time');
+			apiRead('ntp');
 
 			duplicateRows('osd', 10);
 			for (var i = 0; i < 10; i++)
@@ -486,8 +561,15 @@
     							<td><input type="number" id="isp_level3dnr" min="0" max="7" placeholder="0-7"></td>
     						</tr>
     						<tr>
-    							<td><label for="exposure_exposure">Exposure&nbsp;(&micro;s)</label></td>
-    							<td><input type="number" id="exposure_exposure" min="0" max="333333" step="1000" placeholder="0 = auto"></td>
+    							<td><label for="exposure_exposure" title="Shutter time in microseconds. 0 = auto (the AE picks it). A fixed value is capped to the frame budget (1000000 / fps) and only ratchets down when you raise the frame rate — to expose longer, lower the frame rate.">Exposure&nbsp;(&micro;s)</label></td>
+    							<td><input type="number" id="exposure_exposure" min="0" max="1000000" step="1000" placeholder="0 = auto"></td>
+    						</tr>
+    						<tr>
+    							<td><label for="exposure_max" title="Pin the shutter to the full frame time and follow the frame rate automatically — the longest exposure that still holds the configured rate.">Max exposure</label></td>
+    							<td><input type="checkbox" class="toggle" id="exposure_max" onchange="document.getElementById('exposure_exposure').disabled = this.checked"></td>
+    						</tr>
+    						<tr>
+    							<td colspan="2"><small>0 = auto &middot; fixed &micro;s is capped to the frame rate &middot; hover the labels for details.</small></td>
     						</tr>
     						<tr>
     							<td><label for="gain_min_gain">Sensor gain min</label></td>
@@ -510,7 +592,7 @@
     						</tr>
     					</table>
     					<a href="javascript:apiApply('isp')" class="btn right">Apply</a>
-    					<a href="javascript:apiApply('exposure')" class="btn right mr1">Apply exposure</a>
+    					<a href="javascript:applyExposure()" class="btn right mr1">Apply exposure</a>
     					<a href="javascript:apiApply('gain')" class="btn right mr1">Apply gain</a>
     				</fieldset>
     			</div>
@@ -557,6 +639,34 @@
 			<div class="row">
 				<div class="6 col box">
 					<fieldset>
+						<legend>UDP push stream</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="stream_enable">Enabled</label></td>
+								<td><select id="stream_enable">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="stream_dest" title="Where to push the raw RTP/UDP H.26x stream, e.g. udp://192.168.1.50:5600, or an IPv4 multicast group such as udp://239.0.0.1:5600.">Destination</label></td>
+								<td><input type="text" id="stream_dest" placeholder="udp://host:port"></td>
+							</tr>
+							<tr>
+								<td><label for="stream_udp_srcport" title="Local UDP source port the camera sends from. 0 = default (5600).">Source port</label></td>
+								<td><input type="number" id="stream_udp_srcport" min="0" max="65535" placeholder="0 = default"></td>
+							</tr>
+							<tr>
+								<td colspan="2"><small>Pushes RTP/UDP H.26x to the destination with no reboot &mdash; set Enabled ON, fill the destination and hit Apply. Save to keep it across restarts.</small></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('stream')" class="btn right">Apply</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row">
+				<div class="6 col box">
+					<fieldset>
 						<legend>Audio</legend>
 						<table class="w-100">
 							<tr>
@@ -588,7 +698,7 @@
 						<table class="w-100">
 							<tr>
 								<td><label for="jpeg_enable">Enabled</label></td>
-								<td><select id="jpeg_enable">
+								<td><select id="jpeg_enable" onchange="apiEnable('jpeg')">
 									<option value="false">OFF</option>
 									<option value="true">ON</option>
 								</select></td>
@@ -617,7 +727,7 @@
 						<table class="w-100">
 							<tr>
 								<td><label for="mp4_enable">Enabled</label></td>
-								<td><select id="mp4_enable">
+								<td><select id="mp4_enable" onchange="apiEnable('mp4')">
 									<option value="false">OFF</option>
 									<option value="true">ON</option>
 								</select></td>
@@ -667,6 +777,14 @@
 									<option value="HP">High</option>
 								</select></td>
 							</tr>
+							<tr>
+								<td><label for="mp4_min_qual" title="H.26x quantization-parameter lower bound for VBR/AVBR/QP (inclusive). Lower QP = better quality and more bits; the rate controller is clamped to [min, max] and may not pick a QP below this even when bitrate is available. HEVC range 0-51; 18-22 is visually MJPEG-like, 34 is the soft legacy default.">Quality&nbsp;min&nbsp;(QP)</label></td>
+								<td><input type="number" id="mp4_min_qual" min="0" max="51"></td>
+							</tr>
+							<tr>
+								<td><label for="mp4_max_qual" title="H.26x quantization-parameter upper bound for VBR/AVBR/QP (inclusive). Highest (worst) QP the rate controller may use to protect the bitrate budget on hard scenes. Set equal to min for a constant QP. HEVC range 0-51.">Quality&nbsp;max&nbsp;(QP)</label></td>
+								<td><input type="number" id="mp4_max_qual" min="0" max="51"></td>
+							</tr>
 						</table>
 						<a href="javascript:apiApply('mp4')" class="btn right">Apply</a>
 					</fieldset>
@@ -677,7 +795,7 @@
 						<table class="w-100">
 							<tr>
 								<td><label for="mjpeg_enable">Enabled</label></td>
-								<td><select id="mjpeg_enable">
+								<td><select id="mjpeg_enable" onchange="apiEnable('mjpeg')">
 									<option value="false">OFF</option>
 									<option value="true">ON</option>
 								</select></td>
@@ -875,8 +993,13 @@
 									<a href="javascript:apiApply('time')" class="btn cell">Apply</a>
 								</td>
 							</tr>
+							<tr>
+								<td><label for="ntp_server">NTP time server (LAN host/IP)</label></td>
+								<td><input type="text" id="ntp_server" placeholder="leave empty to keep image default"></td>
+								<td><a href="javascript:apiApply('ntp')" class="btn cell">Apply</a></td>
+							</tr>
 						</table>
-						<a href="javascript:apiRead('time')" class="btn right">Refresh</a>
+						<a href="javascript:apiRead('time');apiRead('ntp')" class="btn right">Refresh</a>
 					</fieldset>
 				</div>
 			</div>
@@ -903,5 +1026,6 @@
 			<b>Uptime:</b> <span id="status_uptime"></span><br>
 		</p>
 	</div>
+	<div id="toast"></div>
 </body>
 </html>

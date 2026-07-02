@@ -124,6 +124,19 @@ int color_parse(const char *str) {
     return 0xFFFF;
 }
 
+bool parse_api_int(const char *value, int min, int max, int *out) {
+    char *remain = NULL;
+    long result = strtol(value, &remain, 10);
+    if (remain == value)
+        return false;
+    if (result < min)
+        result = min;
+    else if (result > max)
+        result = max;
+    *out = (int)result;
+    return true;
+}
+
 
 #define REG_ERR_LEN 0x1000
 

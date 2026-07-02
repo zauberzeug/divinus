@@ -1,6 +1,9 @@
 #include "media.h"
 
 #include "gain.h"
+#include "stream_cfg.h"
+#include "hal/captime.h"
+#include "hal/sensor_mode.h"
 
 char audioOn = 0, udpOn = 0;
 pthread_mutex_t aencMtx, chnMtx, mp4Mtx;
@@ -84,6 +87,14 @@ int save_audio_stream(hal_audframe *frame) {
 int save_video_stream(char index, hal_vidstream *stream) {
     int ret;
 
+    /* One capture-time rebase per frame, shared by every stream below: the
+       vendor PTS -> absolute epoch-µs instant. 0 if unavailable (each sender
+       then keeps its send-time fallback rather than emit a wrong stamp). */
+    unsigned long long capture_us = 0;
+    unsigned long long pts_us = stream->count > 0 ? stream->pack[0].timestamp : 0;
+    if (pts_us)
+        captime_now(pts_us, &capture_us);
+
     switch (chnState[index].payload) {
         case HAL_VIDCODEC_H264:
         case HAL_VIDCODEC_H265:
@@ -91,13 +102,13 @@ int save_video_stream(char index, hal_vidstream *stream) {
             char isH265 = chnState[index].payload == HAL_VIDCODEC_H265 ? 1 : 0;
 
             if (app_config.rtsp_enable && rtspHandle)
-                rtp_send_h26x(rtspHandle, stream, isH265);
+                rtp_send_h26x(rtspHandle, stream, isH265, pts_us, capture_us);
 
             if (app_config.stream_enable) {
                 for (int i = 0; i < stream->count; i++) {
                     udp_stream_send_nal(stream->pack[i].data + stream->pack[i].offset,
                         stream->pack[i].length - stream->pack[i].offset,
-                        stream->pack[i].nalu[0].type == NalUnitType_CodedSliceIdr, isH265);
+                        i == stream->count - 1, isH265, pts_us);
 
                     rtmp_ingest_video(&stream->pack[i], isH265);
                 }
@@ -127,7 +138,7 @@ int save_video_stream(char index, hal_vidstream *stream) {
                         data->length - data->offset);
                     buf_size += data->length - data->offset;
                 }
-                send_mjpeg_to_client(index, mjpeg_buf, buf_size);
+                send_mjpeg_to_client(index, mjpeg_buf, buf_size, capture_us);
             }
             break;
         case HAL_VIDCODEC_JPG:
@@ -167,49 +178,28 @@ int media_start(void) {
         }
 
         if (STARTS_WITH(app_config.stream_dests[i], "udp://")) {
-            char *endptr, *hostptr, *portptr, dst[16];
-            unsigned short port = 0;
-            long val;
-
-            if (portptr = strrchr(app_config.stream_dests[i], ':')) {
-                val = strtol(portptr + 1, &endptr, 10);
-                if (endptr != portptr + 1)
-                    port = (unsigned short)val;
-                else {
-                    if (portptr[2] != '/')
-                        HAL_DANGER("media", "Invalid UDP port: %s, going with defaults!\n",
-                            app_config.stream_dests[i]);
-                }
-            }
-
-            hostptr = &app_config.stream_dests[i][6];
-            if (portptr) {
-                size_t hostlen = portptr - hostptr;
-                if (hostlen > sizeof(dst) - 1) hostlen = sizeof(dst) - 1;
-                strncpy(dst, hostptr, hostlen);
-                dst[hostlen] = '\0';
-            } else {
-                strncpy(dst, hostptr, sizeof(dst) - 1);
-                dst[sizeof(dst) - 1] = '\0';
+            char host[INET_ADDRSTRLEN];
+            unsigned short port;
+            int mcast;
+            if (stream_parse_dest(app_config.stream_dests[i], host, sizeof(host),
+                    &port, &mcast)) {
+                HAL_DANGER("media", "Invalid UDP destination: %s, skipping!\n",
+                    app_config.stream_dests[i]);
+                continue;
             }
 
             if (!udpOn) {
-                val = strtol(hostptr, &endptr, 10);
-                if (endptr != hostptr && val >= 224 && val <= 239) {
-                    if (udp_stream_init(app_config.stream_udp_srcport, dst))
-                        udpOn = 1;
-                    else return EXIT_FAILURE;
-                } else {
-                    if (udp_stream_init(app_config.stream_udp_srcport, NULL))
-                        udpOn = 1;
-                    else return EXIT_FAILURE;
-                }
+                if (udp_stream_init(app_config.stream_udp_srcport, mcast ? host : NULL))
+                    return EXIT_FAILURE;
+                udpOn = 1;
             }
 
-            if (udp_stream_add_client(dst, port) != -1)
+            if (udp_stream_add_client(host, port) != -1)
                 HAL_INFO("media", "Starting streaming to %s...\n", app_config.stream_dests[i]);
         }
     }
+
+    return ret;
 }
 
 void media_stop(void) {
@@ -218,6 +208,34 @@ void media_stop(void) {
         udpOn = 0;
     }
     rtmp_close();
+}
+
+void media_stream_sync(void) {
+    /* Runtime enable/disable of the UDP push via /api/stream, no process restart.
+       Disabling is handled entirely by the save_video_stream() fan-out, which
+       only feeds the sender while app_config.stream_enable is set — so we must
+       NOT tear the context down here: udp_stream_send_nal() runs on the encoder
+       thread and would use-after-free a context freed from the HTTP thread. The
+       context is brought up once and lives until media_stop() at shutdown (after
+       sdk_stop() has quiesced the encoder). Enabling just (re)points it at the
+       configured destination; the source port takes effect on the next start. */
+    if (!app_config.stream_enable || !*app_config.stream_dests[0]) return;
+
+    char host[INET_ADDRSTRLEN];
+    unsigned short port;
+    int mcast;
+    if (stream_parse_dest(app_config.stream_dests[0], host, sizeof(host),
+            &port, &mcast)) {
+        HAL_DANGER("media", "Invalid UDP destination: %s\n",
+            app_config.stream_dests[0]);
+        return;
+    }
+    if (!udpOn) {
+        if (udp_stream_init(app_config.stream_udp_srcport, mcast ? host : NULL))
+            return;
+        udpOn = 1;
+    }
+    udp_stream_set_client(host, port);
 }
 
 void request_idr(void) {
@@ -275,6 +293,15 @@ void set_grayscale(bool active) {
     pthread_mutex_unlock(&chnMtx);
 }
 
+static unsigned int get_frame_budget_us(void) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6:  return i6_sensor_frame_budget();
+#endif
+    }
+    return 0;
+}
+
 int set_exposure(unsigned int micros) {
     int ret = -1;
     pthread_mutex_lock(&chnMtx);
@@ -284,7 +311,44 @@ int set_exposure(unsigned int micros) {
 #endif
     }
     pthread_mutex_unlock(&chnMtx);
+
+    /* Latch a fixed request down to the frame budget: the frame rate is the
+       contract, so the stored value reflects what it actually allows and
+       never silently rises if the rate is later lowered. */
+    if (!ret && app_config.exposure != 0 && app_config.exposure != EXPOSURE_MAX) {
+        unsigned int budget = get_frame_budget_us();
+        if (budget && app_config.exposure > budget)
+            app_config.exposure = budget;
+    }
     return ret;
+}
+
+static int set_sensor_rate(char framerate) {
+    int ret = EXIT_SUCCESS;
+    pthread_mutex_lock(&chnMtx);
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6:  ret = i6_sensor_set_rate(framerate); break;
+#endif
+    }
+    pthread_mutex_unlock(&chnMtx);
+    return ret;
+}
+
+/* The sensor rate is the highest enabled stream rate; recompute it (and the
+   exposure policy that hangs off the frame budget) when a stream's fps or
+   enable state changes at runtime, so the UI's stream settings take effect
+   without a restart. */
+void refresh_sensor_rate(void) {
+    char target = MAX(app_config.mp4_enable ? app_config.mp4_fps : 0,
+                      app_config.mjpeg_enable ? app_config.mjpeg_fps : 0);
+    if (target <= 0)
+        return;
+    /* Re-pin exposure unconditionally: on success it re-derives against the new
+       budget; on a failed rate change the rate is unchanged, so it still
+       restores a correct shutter (undoing the transient narrowing). */
+    set_sensor_rate(target);
+    set_exposure(app_config.exposure);
 }
 
 int get_gain_limits(hal_gainlimits *limits) {
@@ -627,6 +691,12 @@ int media_mjpeg_enable(void) {
 int media_mp4_disable(void) {
     int ret;
 
+    /* The H26x encoder (and thus its SPS/PPS/VPS) is going away; drop the
+       cached RTSP parameter sets up front so a reconfig never serves stale ones
+       in the SDP, even if a teardown step below errors out early. */
+    if (app_config.rtsp_enable && rtspHandle)
+        rtsp_clear_sprops(rtspHandle);
+
     for (char i = 0; i < chnCount; i++) {
         if (!chnState[i].enable) continue;
         if (chnState[i].payload != HAL_VIDCODEC_H264 &&
@@ -666,8 +736,8 @@ int media_mp4_enable(void) {
         config.framerate = app_config.mp4_fps;
         config.bitrate = app_config.mp4_bitrate;
         config.maxBitrate = app_config.mp4_bitrate * 5 / 4;
-        config.minQual = 34;
-        config.maxQual = 48;
+        config.minQual = app_config.mp4_min_qual;
+        config.maxQual = app_config.mp4_max_qual;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)
@@ -916,15 +986,33 @@ int sdk_start(void) {
 #endif
         }
 
-    if (app_config.exposure > 0) {
-        ret = set_exposure(app_config.exposure);
-        if (ret)
-            HAL_DANGER("media", "Failed to set exposure %uus: %#x\n",
-                app_config.exposure, ret);
-        else
-            HAL_INFO("media", "Fixed exposure set to %uus\n",
-                app_config.exposure);
+#if defined(__ARM_PCS_VFP)
+    // Once the SigmaStar pipeline is streaming, log the sensor's advertised
+    // resolution modes from /proc. (Reading the node mid-bring-up disturbs the
+    // sensor, and the vendor fnGetResolution call can't walk the table; see
+    // hal/sensor_mode.c.)
+    if (plat == HAL_PLATFORM_I6 || plat == HAL_PLATFORM_I6C ||
+        plat == HAL_PLATFORM_M6) {
+        sensor_mode modes[SENSOR_MODE_MAX];
+        int listed = sensor_mode_read(0, modes, SENSOR_MODE_MAX);
+        if (listed > 0)
+            sensor_mode_log("sensor", modes, listed);
     }
+#endif
+
+    /* Apply the exposure policy for the configured frame rate, including the
+       auto default so its shutter ceiling is tied to the frame budget. */
+    ret = set_exposure(app_config.exposure);
+    if (ret) {
+        if (app_config.exposure)
+            HAL_DANGER("media", "Failed to set exposure: %#x\n", ret);
+    } else if (app_config.exposure == 0)
+        HAL_INFO("media", "Exposure: auto (shutter capped to frame budget)\n");
+    else if (app_config.exposure == EXPOSURE_MAX)
+        HAL_INFO("media", "Exposure: max (pinned to full frame time)\n");
+    else
+        HAL_INFO("media", "Exposure: fixed %uus (clamped to frame budget)\n",
+            app_config.exposure);
 
     {
         hal_gainlimits request = {

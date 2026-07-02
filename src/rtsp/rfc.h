@@ -123,4 +123,14 @@ typedef struct {
 
 typedef struct rtcp_sdes rtcp_sdes_t;
 
+/*
+ * Wire size of a Sender Report carrying no reception report blocks (RC=0):
+ * the 4-byte common header plus 24-byte sender info (RFC 3550 §6.4.1). The
+ * rtcp_t.r.sr struct declares a trailing rr[1] for the variable-length case,
+ * so sizeof(rtcp_t) overshoots — send exactly this many bytes, and set the
+ * header length field to words-minus-one.
+ */
+#define RTCP_SR_NORB_BYTES  28u
+#define RTCP_SR_NORB_LENGTH (RTCP_SR_NORB_BYTES / 4u - 1u)  /* = 6 */
+
 #endif

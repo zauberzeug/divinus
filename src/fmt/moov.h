@@ -28,3 +28,8 @@ struct MoovInfo {
 };
 
 enum BufError write_header(struct BitBuf *ptr, struct MoovInfo *moov_info);
+
+/* Strips H.264/H.265 emulation-prevention three-bytes (00 00 03 -> 00 00),
+   copying i_size bytes from p_src to p_dst and returning the decoded length.
+   Exposed for host unit testing. */
+size_t nal_decode(const uint8_t *p_src, uint8_t *p_dst, size_t i_size);

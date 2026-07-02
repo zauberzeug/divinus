@@ -209,7 +209,10 @@ bool onvif_validate_soap_auth(const char *soap_data) {
         created[end - start] = '\0';
 
         int nonce_len = base64_decode(nonce_dec, nonce, sizeof(nonce_dec));
-        if (nonce_len < 0) return false;
+        /* base64_decode never returns negative; an empty/undecodable nonce
+           yields 0, and (nonce_len - 1) below would wrap sha1_update's
+           unsigned length to ~4 GiB (out-of-bounds read). */
+        if (nonce_len <= 0) return false;
 
         sha1_init(&ctx);
         sha1_update(&ctx, (unsigned char *)nonce_dec, nonce_len - 1);

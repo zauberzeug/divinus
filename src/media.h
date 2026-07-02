@@ -27,11 +27,13 @@ int sdk_stop(void);
 
 int media_start(void);
 void media_stop(void);
+void media_stream_sync(void);
 
 void request_idr(void);
 int get_ae_state(hal_aestate *state);
 int get_gain_limits(hal_gainlimits *limits);
 int set_exposure(unsigned int micros);
+void refresh_sensor_rate(void);
 int set_gain_limits(const hal_gainlimits *request);
 void set_grayscale(bool active);
 int take_next_free_channel(bool mainLoop);

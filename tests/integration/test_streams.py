@@ -16,12 +16,24 @@ Verifies against a live camera that
      skips frames, it never terminates a live client) and receives only
      complete JPEGs — fewer frames per second is fine and expected,
   3. RTSP delivers decodable H26x video over TCP and UDP transport (ffmpeg),
-  4. the fMP4 HTTP stream decodes (bonus, same writev path as /video.26x).
+  4. the fMP4 HTTP stream decodes (bonus, same writev path as /video.26x),
+  5. the raw UDP push enables/disables at runtime via /api/stream with no reboot,
+     emitting decodable RTP (split SPS/PPS/IDR) to this host while enabled.
 
-Usage: uv run test_streams.py [camera-ip]
+The exposure sub-tests mutate fps/exposure/gain live; a failure used to
+leave the camera wedged ("Main stream loop timed out") and confound later stream
+probing. They now run only on request and always restore a known-good streaming
+state (see `restore_streaming`), so stream-integrity checks stay clean.
+
+Usage:
+  uv run test_streams.py [camera-ip]                 # streams only (no exposure mutation)
+  uv run test_streams.py [camera-ip] all             # streams + exposure
+  uv run test_streams.py [camera-ip] exposure        # exposure tests only
+  uv run test_streams.py [camera-ip] <test-names...> # explicit subset, e.g. rtsp-tcp fmp4-http
 """
 
 import io
+import re
 import socket
 import subprocess
 import sys
@@ -40,6 +52,16 @@ results: list[tuple[str, bool, str]] = []
 def report(name: str, ok: bool, detail: str) -> None:
     results.append((name, ok, detail))
     print(f"  {'PASS' if ok else 'FAIL'}  {name}: {detail}")
+
+
+def fps_budget(fps: float, duration_s: float, fraction: float = 0.8) -> int:
+    """Minimum complete frames a healthy stream at `fps` should deliver over
+    `duration_s`: a `fraction` of the achievable budget (fps x duration). The
+    fast-consumer check derives its threshold from this instead of a fixed
+    count, so it tracks the configured rate — a stream healthy at 5 fps is not
+    judged against a 6.7 fps assumption — while a genuine shortfall still trips
+    it. The fraction is headroom for the startup ramp and frame-rate jitter."""
+    return max(1, int(fps * duration_s * fraction))
 
 
 def read_mjpeg_frames(duration_s: float, recv_size: int, delay_s: float):
@@ -175,18 +197,236 @@ def test_fmp4(seconds: int = 6) -> None:
            f"rc={proc.returncode}, {len(errs)} errors" + (f", first: {errs[0].strip()[:90]}" if errs else ""))
 
 
-only = set(sys.argv[2:])  # optional test names to run, e.g. mjpeg-fast rtsp-tcp
+def api(path: str, timeout: float = 8.0) -> str:
+    """GET an /api/* endpoint and return the response body."""
+    s = socket.create_connection((CAM, 80), timeout=timeout)
+    s.sendall(f"GET {path} HTTP/1.1\r\nHost: {CAM}\r\nConnection: close\r\n\r\n".encode())
+    s.settimeout(timeout)
+    data = b""
+    while True:
+        c = s.recv(4096)
+        if not c:
+            break
+        data += c
+    s.close()
+    return data.split(b"\r\n\r\n", 1)[-1].decode(errors="replace")
+
+
+def api_int(path: str, key: str) -> int:
+    m = re.search(rf'"{key}":(-?\d+)', api(path))  # -1 = absent/unreadable
+    return int(m.group(1)) if m else -1
+
+
+def api_bool(path: str, key: str) -> bool:
+    return re.search(rf'"{key}":true', api(path)) is not None
+
+
+def mjpeg_fps(default: int = 5) -> int:
+    """Configured MJPEG frame rate from the camera. Falls back to `default` if
+    the fps field is absent or unparseable, yielding the most lenient budget
+    rather than a false failure."""
+    fps = api_int("/api/mjpeg", "fps")
+    return fps if fps > 0 else default
+
+
+def grab_luma() -> float:
+    """Mean luma (0-255) of one fresh MJPEG frame."""
+    for _clen, body in read_mjpeg_frames(duration_s=6.0, recv_size=65536, delay_s=0):
+        h = Image.open(io.BytesIO(body)).convert("L").histogram()
+        n = sum(h)
+        return sum(i * h[i] for i in range(256)) / n if n else -1.0
+    return -1.0
+
+
+def frame_flow_ok(timeout_s: float = 8.0) -> bool:
+    """True if a complete MJPEG frame arrives within timeout_s — proof the
+    sensor/encoder loop is live, not wedged."""
+    try:
+        for clen, body in read_mjpeg_frames(duration_s=timeout_s, recv_size=65536, delay_s=0):
+            return check_jpeg(body, clen) is None
+    except (ConnectionError, TimeoutError):
+        return False
+    return False
+
+
+def restore_streaming(name: str, mjpeg_fps_was: int) -> None:
+    """Teardown for the live-mutating exposure tests: put fps/exposure/gain back
+    to a known-good streaming state and confirm frames flow again, EVEN when the
+    test body failed mid-run. A failure to resume is reported loudly rather than
+    silently handed to the next run."""
+    if mjpeg_fps_was > 0:
+        api(f"/api/mjpeg?fps={mjpeg_fps_was}")
+    api("/api/exposure?value=0")
+    api("/api/gain?min_gain=0&max_gain=0&min_isp_gain=0&max_isp_gain=0")
+    time.sleep(2)
+    if not frame_flow_ok():
+        report(f"{name}-teardown", False, "frame flow did NOT resume after restore (camera wedged)")
+
+
+def test_exposure_reacts_to_fps() -> None:
+    """A live fps change (web-UI 'Apply' path, no restart) must move the sensor
+    rate, so `exposure: max` re-pins to the new frame budget. Regression: the
+    sensor rate used to update only at boot, so max stayed at the boot budget."""
+    name = "exposure-fps-react"
+    mjpeg_fps_was = api_int("/api/mjpeg", "fps")
+    try:
+        # mp4 stays enabled: changing the sensor fps while it is the *only* active
+        # encoder wedges the shared main loop ("Main stream loop timed out") with
+        # no API recovery. The mjpeg fps change drives the sensor budget either
+        # way, so the regression is still exercised.
+        api("/api/mjpeg?enable=true&fps=20"); time.sleep(2)
+        api("/api/exposure?value=max"); time.sleep(2)
+        hi = api_int("/api/gain", "shutter_us")          # ~ 1e6/20 = 50000
+        api("/api/mjpeg?fps=5"); time.sleep(2)            # live Apply, no restart
+        api("/api/exposure?value=max"); time.sleep(2)
+        lo = api_int("/api/gain", "shutter_us")          # must react -> ~ 1e6/5 = 200000
+        ok = hi > 0 and lo > hi * 2
+        report(name, ok, f"max shutter @20fps={hi}us -> @5fps={lo}us "
+                         f"(expect ~50000 -> ~200000; no restart)")
+    finally:
+        restore_streaming(name, mjpeg_fps_was)
+
+
+def test_exposure_brightness() -> None:
+    """With AE gain pinned to 1x, image brightness must track the shutter — a
+    longer fixed exposure is visibly brighter. Guards against trusting the
+    shutter read-back when the actual integration does not change."""
+    name = "exposure-brightness"
+    mjpeg_fps_was = api_int("/api/mjpeg", "fps")
+    try:
+        api("/api/gain?min_gain=1024&max_gain=1024&min_isp_gain=1024&max_isp_gain=1024")
+        api("/api/exposure?value=2000"); time.sleep(2)
+        dim = grab_luma()
+        api("/api/exposure?value=20000"); time.sleep(2)
+        bright = grab_luma()
+        ok = dim >= 0 and bright > dim + 5
+        report(name, ok, f"luma @2ms={dim:.1f} -> @20ms={bright:.1f} "
+                         f"(gain pinned 1x; longer shutter must brighten)")
+    finally:
+        restore_streaming(name, mjpeg_fps_was)
+
+
+def host_ip_seen_by_camera() -> str:
+    """The local address the camera reaches us on — the UDP push destination."""
+    s = socket.create_connection((CAM, 80), timeout=8)
+    ip = s.getsockname()[0]
+    s.close()
+    return ip
+
+
+# NAL type tables (mirrors utils/verify_udp_stream.py): param sets + IDR per codec.
+_H265 = {33, 34}, {19, 20}, 49  # (SPS,PPS), (IDR...), FU type
+_H264 = {7, 8}, {5}, 28
+
+
+def _seen_nal_types(pkts: list[bytes], h265: bool) -> set[int]:
+    """Classify each RTP packet's NAL type, unwrapping FU fragments to the
+    original type — so a split SPS/PPS/IDR shows up whether sent whole or
+    fragmented."""
+    _, _, fu = _H265 if h265 else _H264
+    seen = set()
+    for data in pkts:
+        if len(data) < 14:
+            continue
+        p = data[12:]  # strip RTP header
+        t = (p[0] >> 1) & 0x3F if h265 else p[0] & 0x1F
+        if t == fu:
+            fu_h = p[2] if h265 else p[1]
+            seen.add(fu_h & 0x3F if h265 else fu_h & 0x1F)
+        else:
+            seen.add(t)
+    return seen
+
+
+def capture_rtp(bind_ip: str, port: int, secs: float) -> list[bytes]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # Bind to the exact address the camera pushes to (not 0.0.0.0): the camera
+    # sends to this host's IP, so this receives the same packets without
+    # listening on every interface.
+    sock.bind((bind_ip, port))
+    sock.settimeout(1.0)
+    out, deadline = [], time.monotonic() + secs
+    try:
+        while time.monotonic() < deadline:
+            try:
+                out.append(sock.recvfrom(65535)[0])
+            except socket.timeout:
+                continue
+    finally:
+        sock.close()
+    return out
+
+
+def test_stream_udp_runtime(port: int = 5600) -> None:
+    """The raw UDP push must enable/disable at runtime via /api/stream with no
+    reboot: enabling starts decodable RTP (split SPS/PPS/IDR) to our IP, disabling
+    stops it, and GET reflects the live state. Needs the host to accept inbound
+    UDP on `port`."""
+    name = "stream-udp-runtime"
+    host_ip = host_ip_seen_by_camera()
+    dest = f"udp://{host_ip}:{port}"
+    enable_was = api_bool("/api/stream", "enable")
+    try:
+        api(f"/api/stream?enable=true&dest={dest}")
+        live_ok = api_bool("/api/stream", "enable") and dest in api("/api/stream")
+        on = capture_rtp(host_ip, port, 6.0)
+        # Detect codec from the wire: H.265 if its SPS+PPS types show up.
+        h265 = {33, 34}.issubset(_seen_nal_types(on, h265=True))
+        sps_pps, idr, _ = _H265 if h265 else _H264
+        seen = _seen_nal_types(on, h265)
+        split_ok = sps_pps.issubset(seen) and bool(idr & seen)
+
+        api("/api/stream?enable=false")
+        time.sleep(1.0)  # let the last in-flight frame drain; the push then goes silent
+        off = capture_rtp(host_ip, port, 2.0)
+        disabled_ok = api_bool("/api/stream", "enable") is False
+
+        ok = live_ok and len(on) > 10 and split_ok and len(off) == 0 and disabled_ok
+        report(name, ok,
+                f"enabled: {len(on)} pkts, SPS/PPS/IDR split={split_ok}; "
+                f"GET live={live_ok}; disabled: {len(off)} pkts, GET off={disabled_ok}")
+    finally:
+        if enable_was:
+            api(f"/api/stream?enable=true&dest={dest}")
+        else:
+            api("/api/stream?enable=false")
+
+
+# The exposure tests mutate fps/exposure/gain live; they run only on request so
+# stream-integrity checks stay clean. Default (no args) = streams only.
+STREAM_TESTS = {"mjpeg-fast", "mjpeg-slow", "rtsp-tcp", "rtsp-udp", "fmp4-http", "stream-udp-runtime"}
+EXPOSURE_TESTS = {"exposure-fps-react", "exposure-brightness"}
+
+args = sys.argv[2:]  # group keyword, --no-exposure, or explicit test names
+selected: set[str] = set()
+for arg in args:
+    if arg in ("all", "--all"):
+        selected |= STREAM_TESTS | EXPOSURE_TESTS
+    elif arg in ("streams", "--no-exposure"):
+        selected |= STREAM_TESTS
+    elif arg == "exposure":
+        selected |= EXPOSURE_TESTS
+    elif arg in STREAM_TESTS | EXPOSURE_TESTS:
+        selected.add(arg)
+    else:
+        sys.exit(f"unknown test/group '{arg}'; pick from: all, streams, exposure, "
+                 f"{', '.join(sorted(STREAM_TESTS | EXPOSURE_TESTS))}")
+only = selected or STREAM_TESTS  # default: streams only, never the live-mutating exposure tests
 
 
 def wanted(name: str) -> bool:
-    return not only or name in only
+    return name in only
 
 
 print(f"=== divinus stream integrity tests against {CAM} ===")
 
 if wanted("mjpeg-fast"):
-    print("[1/5] MJPEG, fast consumer (64 KiB reads, no delay, 30 s sustained)...")
-    test_mjpeg("mjpeg-fast", duration_s=30.0, recv_size=65536, delay_s=0, min_frames=200)
+    fast_fps = mjpeg_fps()
+    fast_budget = fps_budget(fast_fps, 30.0)
+    print(f"[1/5] MJPEG, fast consumer (64 KiB reads, no delay, 30 s sustained, "
+          f"{fast_fps} fps -> >= {fast_budget} frames)...")
+    test_mjpeg("mjpeg-fast", duration_s=30.0, recv_size=65536, delay_s=0, min_frames=fast_budget)
 
 if wanted("mjpeg-slow"):
     print("[2/5] MJPEG, slow consumer (8 KiB reads, 10 ms delay -> steady ~0.8 MB/s drain)...")
@@ -203,6 +443,18 @@ if wanted("rtsp-udp"):
 if wanted("fmp4-http"):
     print("[5/5] fMP4 over HTTP...")
     test_fmp4()
+
+if wanted("exposure-fps-react"):
+    print("[exposure] Budget reacts to a live fps change (no restart)...")
+    test_exposure_reacts_to_fps()
+
+if wanted("exposure-brightness"):
+    print("[exposure] Brightness tracks shutter (gain pinned 1x)...")
+    test_exposure_brightness()
+
+if wanted("stream-udp-runtime"):
+    print("[8/8] UDP push enables/disables at runtime via /api/stream (no restart)...")
+    test_stream_udp_runtime()
 
 print()
 failed = [r for r in results if not r[1]]

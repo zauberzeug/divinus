@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "hal/config.h"
+#include "hal/frc.h"
 #include "hal/support.h"
 #include "region.h"
 
@@ -25,6 +26,8 @@ struct AppConfig {
     unsigned int venc_stream_thread_stack_size;
     unsigned int web_server_thread_stack_size;
     unsigned int watchdog;
+    // LAN NTP time source; empty keeps the image's /etc/ntp.conf untouched
+    char ntp_server[128];
 
     // [night_mode]
     bool night_mode_enable;
@@ -97,6 +100,8 @@ struct AppConfig {
     unsigned int mp4_height;
     unsigned int mp4_profile;
     unsigned int mp4_bitrate;
+    unsigned int mp4_min_qual;
+    unsigned int mp4_max_qual;
 
     // [jpeg]
     bool jpeg_enable;

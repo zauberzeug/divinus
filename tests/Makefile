@@ -24,13 +24,28 @@ test_nal_SRC := $(SRCDIR)/fmt/nal.c
 test_rtmp_chunk_SRC := $(SRCDIR)/fmt/flv.c $(SRCDIR)/fmt/amf.c $(SRCDIR)/fmt/bitbuf.c
 test_rtmp_chunk_DEPS := $(SRCDIR)/rtmp.c
 test_http_headers_SRC := $(SRCDIR)/http_headers.c $(SRCDIR)/hal/tools.c
-test_config_bounds_SRC := $(SRCDIR)/hal/config.c $(SRCDIR)/hal/tools.c
+test_config_bounds_SRC := $(SRCDIR)/hal/config.c $(SRCDIR)/hal/tools.c \
+                          $(SRCDIR)/stream_cfg.c $(SRCDIR)/app_config.c
+test_config_disabled_stream_SRC := $(SRCDIR)/app_config.c $(SRCDIR)/hal/config.c \
+                                   $(SRCDIR)/hal/tools.c $(SRCDIR)/stream_cfg.c
+test_api_stream_SRC := $(SRCDIR)/stream_cfg.c $(SRCDIR)/hal/tools.c \
+                       $(SRCDIR)/hal/config.c
 test_http_post_SRC := $(SRCDIR)/http_post.c
+test_mime_SRC := $(SRCDIR)/rtsp/mime.c
 test_record_SRC := $(SRCDIR)/record.c $(SRCDIR)/fmt/mp4.c $(SRCDIR)/fmt/bitbuf.c \
                    $(SRCDIR)/fmt/moof.c $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/nal.c
 test_sock_send_SRC := $(SRCDIR)/sock_send.c
+test_stream_rtp_SRC := $(SRCDIR)/stream.c $(SRCDIR)/fmt/rtppkt.c $(SRCDIR)/hal/tools.c \
+                       $(SRCDIR)/hal/captime.c
+test_rtp_split_SRC := $(SRCDIR)/fmt/rtppkt.c
+test_nal_epb_SRC := $(SRCDIR)/fmt/moov.c $(SRCDIR)/fmt/bitbuf.c $(SRCDIR)/fmt/nal.c
+test_rtppkt_SRC := $(SRCDIR)/fmt/rtppkt.c
 test_frc_SRC := $(SRCDIR)/hal/frc.c
+test_sensor_mode_SRC := $(SRCDIR)/hal/sensor_mode.c
+test_captime_SRC := $(SRCDIR)/hal/captime.c
+test_rtcp_sr_SRC := $(SRCDIR)/hal/captime.c
 test_gain_SRC := $(SRCDIR)/gain.c
+test_api_int_SRC := $(SRCDIR)/hal/tools.c
 
 .PHONY: all clean
 all: $(BINS)
