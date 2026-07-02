@@ -487,17 +487,19 @@ enum ConfigError app_config_parse(void) {
     }
 
     parse_bool(&ini, "onvif", "enable", &app_config.onvif_enable);
-    if (app_config.onvif_enable) {
-        parse_bool(&ini, "onvif", "enable_auth", &app_config.onvif_enable_auth);
-        err = parse_auth_cred(&ini, "onvif", "auth_user",
-            app_config.onvif_auth_user, sizeof(app_config.onvif_auth_user));
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_auth_cred(&ini, "onvif", "auth_pass",
-            app_config.onvif_auth_pass, sizeof(app_config.onvif_auth_pass));
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-    }
+    /* Auth fields are written unconditionally, so parse them unconditionally —
+       otherwise disabling ONVIF and saving round-trips the stored credentials
+       to empty. An over-long value only aborts startup when ONVIF is enabled;
+       for a disabled section it parses to empty rather than bricking boot. */
+    parse_bool(&ini, "onvif", "enable_auth", &app_config.onvif_enable_auth);
+    err = parse_auth_cred(&ini, "onvif", "auth_user",
+        app_config.onvif_auth_user, sizeof(app_config.onvif_auth_user));
+    if (err != CONFIG_OK && app_config.onvif_enable)
+        goto RET_ERR;
+    err = parse_auth_cred(&ini, "onvif", "auth_pass",
+        app_config.onvif_auth_pass, sizeof(app_config.onvif_auth_pass));
+    if (err != CONFIG_OK && app_config.onvif_enable)
+        goto RET_ERR;
 
     parse_bool(&ini, "record", "enable", &app_config.record_enable);
     parse_bool(&ini, "record", "continuous", &app_config.record_continuous);
@@ -512,17 +514,18 @@ enum ConfigError app_config_parse(void) {
 
     parse_bool(&ini, "rtsp", "enable", &app_config.rtsp_enable);
     parse_int(&ini, "rtsp", "port", 0, USHRT_MAX, &app_config.rtsp_port);
-    if (app_config.rtsp_enable) {
-        parse_bool(&ini, "rtsp", "enable_auth", &app_config.rtsp_enable_auth);
-        err = parse_auth_cred(&ini, "rtsp", "auth_user",
-            app_config.rtsp_auth_user, sizeof(app_config.rtsp_auth_user));
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_auth_cred(&ini, "rtsp", "auth_pass",
-            app_config.rtsp_auth_pass, sizeof(app_config.rtsp_auth_pass));
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-    }
+    /* Same round-trip fix as ONVIF: auth fields are written unconditionally, so
+       parse them unconditionally; over-long values are fatal only when RTSP is
+       enabled. */
+    parse_bool(&ini, "rtsp", "enable_auth", &app_config.rtsp_enable_auth);
+    err = parse_auth_cred(&ini, "rtsp", "auth_user",
+        app_config.rtsp_auth_user, sizeof(app_config.rtsp_auth_user));
+    if (err != CONFIG_OK && app_config.rtsp_enable)
+        goto RET_ERR;
+    err = parse_auth_cred(&ini, "rtsp", "auth_pass",
+        app_config.rtsp_auth_pass, sizeof(app_config.rtsp_auth_pass));
+    if (err != CONFIG_OK && app_config.rtsp_enable)
+        goto RET_ERR;
 
     stream_config_parse(&ini, &app_config);
 

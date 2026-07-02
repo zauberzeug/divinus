@@ -250,6 +250,77 @@ static void test_disabled_night_mode_out_of_range_pin_logs_error(void) {
     assert(strstr(logbuf, "not in a range") != NULL);
 }
 
+static void test_disabled_onvif_keeps_auth(void) {
+    /* Auth fields are written unconditionally, so a disabled ONVIF section must
+       read its credentials back rather than the zero-initialized empties. */
+    load("onvif:\n  enable: false\n  enable_auth: true\n"
+         "  auth_user: onvifuser\n  auth_pass: onvifpass\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(!app_config.onvif_enable);
+    assert(app_config.onvif_enable_auth);
+    assert(strcmp(app_config.onvif_auth_user, "onvifuser") == 0);
+    assert(strcmp(app_config.onvif_auth_pass, "onvifpass") == 0);
+}
+
+static void test_disabled_onvif_survives_save_reload(void) {
+    /* Enable ONVIF with distinctive credentials, disable it, then save+reload:
+       the unconditional writer persists the creds, so a correct parser must
+       keep them — before the fix the disabled-path parse dropped them and the
+       reload destroyed the stored credentials. */
+    load("onvif:\n  enable: true\n  enable_auth: true\n"
+         "  auth_user: keepme\n  auth_pass: secret42\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(app_config.onvif_enable);
+    assert(strcmp(app_config.onvif_auth_user, "keepme") == 0);
+
+    app_config.onvif_enable = false;           /* user turns ONVIF off */
+    assert(app_config_save() == EXIT_SUCCESS);
+    assert(app_config_parse() == CONFIG_OK);
+
+    assert(!app_config.onvif_enable);
+    assert(app_config.onvif_enable_auth);
+    assert(strcmp(app_config.onvif_auth_user, "keepme") == 0);
+    assert(strcmp(app_config.onvif_auth_pass, "secret42") == 0);
+}
+
+static void test_disabled_rtsp_survives_save_reload(void) {
+    load("rtsp:\n  enable: true\n  port: 8554\n  enable_auth: true\n"
+         "  auth_user: rtspuser\n  auth_pass: rtsppass\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(app_config.rtsp_enable);
+    assert(strcmp(app_config.rtsp_auth_user, "rtspuser") == 0);
+
+    app_config.rtsp_enable = false;            /* user turns RTSP off */
+    assert(app_config_save() == EXIT_SUCCESS);
+    assert(app_config_parse() == CONFIG_OK);
+
+    assert(!app_config.rtsp_enable);
+    assert(app_config.rtsp_enable_auth);
+    assert(strcmp(app_config.rtsp_auth_user, "rtspuser") == 0);
+    assert(strcmp(app_config.rtsp_auth_pass, "rtsppass") == 0);
+}
+
+/* auth_user/auth_pass are char[32] → 31 chars max; this is 40. */
+#define OVERLONG_CRED "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+static void test_disabled_onvif_overlong_cred_not_fatal(void) {
+    /* A stale over-long credential in a DISABLED section must not brick
+       startup: parse succeeds and the field reads back empty (the parser
+       leaves the buffer untouched on TOO_LONG). */
+    load("onvif:\n  enable: false\n  auth_user: " OVERLONG_CRED "\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(!app_config.onvif_enable);
+    assert(app_config.onvif_auth_user[0] == '\0');
+}
+
+static void test_enabled_onvif_overlong_cred_is_fatal(void) {
+    /* When the section is ENABLED the oversize refusal stays fatal, so a bad
+       credential can't silently truncate into an in-use auth check. */
+    write_config("onvif:\n  enable: true\n  auth_user: " OVERLONG_CRED "\n"
+                 JPEG_OFF MJPEG_OFF);
+    assert(app_config_parse() != CONFIG_OK);
+}
+
 static void test_enabled_mp4_still_parses(void) {
     load("mp4:\n  enable: true\n  width: 3840\n  height: 2160\n"
          "  fps: 20\n  bitrate: 1024\n"
@@ -271,6 +342,11 @@ int main(void) {
     test_disabled_night_mode_keeps_params();
     test_disabled_night_mode_unset_pins_are_silent();
     test_disabled_night_mode_out_of_range_pin_logs_error();
+    test_disabled_onvif_keeps_auth();
+    test_disabled_onvif_survives_save_reload();
+    test_disabled_rtsp_survives_save_reload();
+    test_disabled_onvif_overlong_cred_not_fatal();
+    test_enabled_onvif_overlong_cred_is_fatal();
     test_enabled_mp4_still_parses();
     if (*conf_path) {
         char bak[PATH_MAX];
