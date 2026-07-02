@@ -236,6 +236,27 @@ static enum ConfigError parse_auth_cred(struct IniConfig *ini,
     return err;
 }
 
+#define PIN_MAX 95
+#define PIN_UNSET 999
+
+/* GPIO pin params allow 999 as an explicit "unset" sentinel in saved config. */
+static enum ConfigError parse_pin(struct IniConfig *ini,
+    const char *section, const char *param, int *value) {
+    int v = *value;
+    enum ConfigError err = parse_int(ini, section, param, 0, PIN_UNSET, &v);
+    if (err != CONFIG_OK)
+        return err;
+    if (v > PIN_MAX && v != PIN_UNSET) {
+        HAL_DANGER("config",
+            "Can't parse param '%s' value '%d'. Value '%d' is not in a "
+            "range [%d; %d].",
+            param, v, v, 0, PIN_MAX);
+        return CONFIG_PARAM_ISNT_IN_RANGE;
+    }
+    *value = v;
+    return CONFIG_OK;
+}
+
 enum ConfigError app_config_parse(void) {
     memset(&app_config, 0, sizeof(struct AppConfig));
 
@@ -311,10 +332,10 @@ enum ConfigError app_config_parse(void) {
     app_config.level3dnr = 0;
 
     app_config.night_mode_enable = false;
-    app_config.ir_sensor_pin = 999;
-    app_config.ir_cut_pin1 = 999;
-    app_config.ir_cut_pin2 = 999;
-    app_config.ir_led_pin = 999;
+    app_config.ir_sensor_pin = PIN_UNSET;
+    app_config.ir_cut_pin1 = PIN_UNSET;
+    app_config.ir_cut_pin2 = PIN_UNSET;
+    app_config.ir_led_pin = PIN_UNSET;
     app_config.pin_switch_delay_us = 250;
     app_config.check_interval_s = 10;
     app_config.adc_device[0] = 0;
@@ -388,23 +409,14 @@ enum ConfigError app_config_parse(void) {
 
     err =
         parse_bool(&ini, "night_mode", "enable", &app_config.night_mode_enable);
-    #define PIN_MAX 95
     /* Parse even when disabled so configured values survive; fatal only if enabled. */
-    parse_int(
-        &ini, "night_mode", "ir_sensor_pin", 0, PIN_MAX,
-        &app_config.ir_sensor_pin);
+    parse_pin(&ini, "night_mode", "ir_sensor_pin", &app_config.ir_sensor_pin);
     parse_int(
         &ini, "night_mode", "check_interval_s", 0, 600,
         &app_config.check_interval_s);
-    parse_int(
-        &ini, "night_mode", "ir_cut_pin1", 0, PIN_MAX,
-        &app_config.ir_cut_pin1);
-    parse_int(
-        &ini, "night_mode", "ir_cut_pin2", 0, PIN_MAX,
-        &app_config.ir_cut_pin2);
-    parse_int(
-        &ini, "night_mode", "ir_led_pin", 0, PIN_MAX,
-        &app_config.ir_led_pin);
+    parse_pin(&ini, "night_mode", "ir_cut_pin1", &app_config.ir_cut_pin1);
+    parse_pin(&ini, "night_mode", "ir_cut_pin2", &app_config.ir_cut_pin2);
+    parse_pin(&ini, "night_mode", "ir_led_pin", &app_config.ir_led_pin);
     parse_int(
         &ini, "night_mode", "pin_switch_delay_us", 0, 1000,
         &app_config.pin_switch_delay_us);

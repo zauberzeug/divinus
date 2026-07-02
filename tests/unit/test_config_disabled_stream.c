@@ -42,7 +42,7 @@ static const char *BASE =
 
 /* Write BASE + the given stream block next to this executable — the first path
    app_config_open() probes — then run the real parser, CWD-independent. */
-static void load(const char *streams) {
+static void write_config(const char *streams) {
     char exe[PATH_MAX];
     ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
     assert(n > 0);
@@ -53,6 +53,32 @@ static void load(const char *streams) {
     fputs(BASE, f);
     fputs(streams, f);
     fclose(f);
+}
+
+static enum ConfigError parse_with_stderr_capture(char *logbuf, size_t size) {
+    assert(size > 0);
+    int saved_stderr = dup(STDERR_FILENO);
+    assert(saved_stderr >= 0);
+
+    FILE *tmp = tmpfile();
+    assert(tmp);
+    assert(dup2(fileno(tmp), STDERR_FILENO) >= 0);
+
+    enum ConfigError err = app_config_parse();
+
+    fflush(stderr);
+    assert(dup2(saved_stderr, STDERR_FILENO) >= 0);
+    close(saved_stderr);
+
+    assert(fseek(tmp, 0, SEEK_SET) == 0);
+    size_t nread = fread(logbuf, 1, size - 1, tmp);
+    logbuf[nread] = '\0';
+    fclose(tmp);
+    return err;
+}
+
+static void load(const char *streams) {
+    write_config(streams);
     assert(app_config_parse() == CONFIG_OK);
 }
 
@@ -189,6 +215,41 @@ static void test_disabled_night_mode_keeps_params(void) {
     assert(app_config.adc_threshold == 200);
 }
 
+static void test_disabled_night_mode_unset_pins_are_silent(void) {
+    char logbuf[4096];
+
+    write_config("night_mode:\n  enable: false\n  ir_sensor_pin: 999\n"
+                 "  check_interval_s: 30\n  ir_cut_pin1: 999\n"
+                 "  ir_cut_pin2: 999\n  ir_led_pin: 999\n"
+                 "  pin_switch_delay_us: 500\n"
+                 "  adc_device: /dev/adc0\n  adc_threshold: 200\n"
+                 JPEG_OFF MJPEG_OFF);
+
+    assert(parse_with_stderr_capture(logbuf, sizeof(logbuf)) == CONFIG_OK);
+    assert(!app_config.night_mode_enable);
+    assert(app_config.ir_sensor_pin == 999);
+    assert(app_config.ir_cut_pin1 == 999);
+    assert(app_config.ir_cut_pin2 == 999);
+    assert(app_config.ir_led_pin == 999);
+    assert(strstr(logbuf, "not in a range") == NULL);
+}
+
+static void test_disabled_night_mode_out_of_range_pin_logs_error(void) {
+    char logbuf[4096];
+
+    write_config("night_mode:\n  enable: false\n  ir_sensor_pin: 200\n"
+                 "  check_interval_s: 30\n  ir_cut_pin1: 999\n"
+                 "  ir_cut_pin2: 999\n  ir_led_pin: 999\n"
+                 "  pin_switch_delay_us: 500\n"
+                 "  adc_device: /dev/adc0\n  adc_threshold: 200\n"
+                 JPEG_OFF MJPEG_OFF);
+
+    assert(parse_with_stderr_capture(logbuf, sizeof(logbuf)) == CONFIG_OK);
+    assert(!app_config.night_mode_enable);
+    assert(app_config.ir_sensor_pin == 999);
+    assert(strstr(logbuf, "not in a range") != NULL);
+}
+
 static void test_enabled_mp4_still_parses(void) {
     load("mp4:\n  enable: true\n  width: 3840\n  height: 2160\n"
          "  fps: 20\n  bitrate: 1024\n"
@@ -208,6 +269,8 @@ int main(void) {
     test_disabled_http_post_survives_save_reload();
     test_disabled_audio_keeps_params();
     test_disabled_night_mode_keeps_params();
+    test_disabled_night_mode_unset_pins_are_silent();
+    test_disabled_night_mode_out_of_range_pin_logs_error();
     test_enabled_mp4_still_parses();
     if (*conf_path) {
         char bak[PATH_MAX];
