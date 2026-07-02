@@ -65,6 +65,9 @@
 		a.btn { display: inline-block; }
 		.btn.cell { display: table-cell; width: 1%; }
 
+		/* Toast */
+		#toast { position: fixed; left: 50%; bottom: 1em; transform: translateX(-50%); max-width: 90%; margin: 0; padding: 0.3em 0.6em; background: var(--menu-bg); color: #fff; border-radius: 2px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); font-size: 13px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; visibility: hidden; transition: opacity 0.2s; z-index: 30; }
+		#toast.show { opacity: 1; visibility: visible; }
 		/* Form inputs */
 		input, select { font-family: inherit; padding: 0.4em 0.6em; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text-color); transition: border-color 0.2s; }
 		input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(2,132,199,0.2); }
@@ -171,16 +174,76 @@
 
 		function apiApply(endp) {
 			var dest = "/api/" + endp + "?", req = new XMLHttpRequest();
-			var elems = document.getElementsByTagName('*');
+			var sent = {}, elems = document.getElementsByTagName('*');
 			for (var i = 0; i < elems.length; i++) {
 				if (!elems[i].id || elems[i].id.lastIndexOf(endp + '_', 0)) continue;
 				if (elems[i].type && elems[i].type == "file") continue;
-					dest += elems[i].id.substring(endp.length + 1) +
-						'=' + encodeURIComponent(elems[i].value) + '&';
+				var key = elems[i].id.substring(endp.length + 1);
+				sent[key] = elems[i].value;
+				dest += key + '=' + encodeURIComponent(elems[i].value) + '&';
 			}
 			dest = dest.slice(0, -1);
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(req.responseText);
+				var adjusted = [];
+				for (var key in dec) {
+					if (!dec.hasOwnProperty(key) || typeof dec[key] != 'number') continue;
+					if (!(key in sent) || sent[key] === '') continue;
+					if (Number(sent[key]) != dec[key])
+						adjusted.push(key + ' \u2192 ' + dec[key]);
+				}
+				applyFields(endp, dec);
+				if (adjusted.length)
+					showToast('Adjusted to valid range: ' + adjusted.join(', '));
+			};
 			req.open('GET', dest);
 			req.send();
+		}
+
+		function applyFields(endp, dec) {
+			for (var key in dec) {
+				if (!dec.hasOwnProperty(key)) continue;
+
+				var elem = document.getElementById(endp + '_' + key);
+				if (elem && elem.type && elem.type == "file") {
+					var lbls = document.getElementsByTagName('LABEL');
+					for (var i = 0; i < lbls.length; i++) {
+						if (lbls[i].htmlFor != endp + '_' + key) continue;
+						lbls[i].innerHTML = 'Region ' + dec[key];
+						break;
+					}
+					continue;
+				} else if (!elem) continue;
+
+				if (elem.tagName == 'INPUT') {
+					elem.value = dec[key];
+					if (elem.type == 'range') {
+						var valElem = document.getElementById(elem.id + '_val');
+						if (valElem) valElem.innerHTML = dec[key];
+					}
+					if (typeof updateOsdSummary === 'function' && (elem.id.indexOf('_text') > -1 || elem.id.indexOf('_img') > -1))
+						updateOsdSummary(elem.id);
+				} else if (elem.tagName == 'SELECT') {
+					for (var i = 0; i < elem.options.length; i++) {
+						if (elem.options[i].value == dec[key] + '') {
+							elem.selectedIndex = i;
+							break;
+						}
+					}
+				} else {
+					elem.innerHTML = dec[key];
+				}
+			}
+		}
+
+		function showToast(msg) {
+			var toast = document.getElementById('toast');
+			if (!toast) return;
+			toast.innerHTML = msg;
+			toast.className = 'show';
+			clearTimeout(showToast.timer);
+			showToast.timer = setTimeout(function() { toast.className = ''; }, 4000);
 		}
 
 		/* Toggle a stream on/off live, sending only enable= — leaves its other
@@ -252,39 +315,7 @@
 			req.onreadystatechange = function() {
 				if (this.readyState != 4 || this.status != 200) return false;
 				var dec = JSON.parse(req.responseText);
-				for (var key in dec) {
-					if (!dec.hasOwnProperty(key)) continue;
-
-					var elem = document.getElementById(endp + '_' + key);
-					if (elem && elem.type && elem.type == "file") {
-						var lbls = document.getElementsByTagName('LABEL');
-						for (var i = 0; i < lbls.length; i++) {
-							if (lbls[i].htmlFor != endp + '_' + key) continue;
-							lbls[i].innerHTML = 'Region ' + dec[key];
-							break;
-						}
-						continue;
-					} else if (!elem) continue;
-
-					if (elem.tagName == 'INPUT') {
-						elem.value = dec[key];
-						if (elem.type == 'range') {
-							var valElem = document.getElementById(elem.id + '_val');
-							if (valElem) valElem.innerHTML = dec[key];
-						}
-						if (typeof updateOsdSummary === 'function' && (elem.id.indexOf('_text') > -1 || elem.id.indexOf('_img') > -1))
-							updateOsdSummary(elem.id);
-					} else if (elem.tagName == 'SELECT') {
-						for (var i = 0; i < elem.options.length; i++) {
-							if (elem.options[i].value == dec[key] + '') {
-								elem.selectedIndex = i;
-								break;
-							}
-						}
-					} else {
-						elem.innerHTML = dec[key];
-					}
-				}
+				applyFields(endp, dec);
 			}
 			req.open('GET', '/api/' + endp);
 			req.send();
@@ -782,6 +813,14 @@
 									<option value="HP">High</option>
 								</select></td>
 							</tr>
+							<tr>
+								<td><label for="mp4_min_qual" title="H.26x quantization-parameter lower bound for VBR/AVBR/QP (inclusive). Lower QP = better quality and more bits; the rate controller is clamped to [min, max] and may not pick a QP below this even when bitrate is available. HEVC range 0-51; 18-22 is visually MJPEG-like, 34 is the soft legacy default.">Quality&nbsp;min&nbsp;(QP)</label></td>
+								<td><input type="number" id="mp4_min_qual" min="0" max="51"></td>
+							</tr>
+							<tr>
+								<td><label for="mp4_max_qual" title="H.26x quantization-parameter upper bound for VBR/AVBR/QP (inclusive). Highest (worst) QP the rate controller may use to protect the bitrate budget on hard scenes. Set equal to min for a constant QP. HEVC range 0-51.">Quality&nbsp;max&nbsp;(QP)</label></td>
+								<td><input type="number" id="mp4_max_qual" min="0" max="51"></td>
+							</tr>
 						</table>
 						<a href="javascript:apiApply('mp4')" class="btn right">Apply</a>
 					</fieldset>
@@ -1023,5 +1062,6 @@
 			<b>Uptime:</b> <span id="status_uptime"></span><br>
 		</p>
 	</div>
+	<div id="toast"></div>
 </body>
 </html>

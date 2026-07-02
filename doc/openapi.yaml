@@ -288,6 +288,16 @@ paths:
           description: Encoding profile (case-insensitive); long forms BASELINE/MAIN/HIGH are also accepted.
           required: false
           schema: {type: string, enum: [BP, MP, HP]}
+        - name: min_qual
+          in: query
+          description: H.26x QP floor for VBR/AVBR/QP rate control (HEVC range 0–51, lower = better quality). Default 34.
+          required: false
+          schema: {type: integer, minimum: 0, maximum: 51}
+        - name: max_qual
+          in: query
+          description: H.26x QP ceiling for VBR/AVBR/QP rate control (HEVC range 0–51). Default 48.
+          required: false
+          schema: {type: integer, minimum: 0, maximum: 51}
       responses:
         '200':
           description: Current MP4 stream configuration.
@@ -892,6 +902,8 @@ components:
         mode: {type: string, enum: [CBR, VBR, QP, ABR, AVBR], description: Rate-control mode.}
         profile: {type: string, enum: [BP, MP, HP], description: Encoding profile.}
         bitrate: {type: integer, description: Target bitrate in kbps.}
+        min_qual: {type: integer, description: 'H.26x QP floor (0–51, lower = better); default 34.'}
+        max_qual: {type: integer, description: 'H.26x QP ceiling (0–51); default 48.'}
 
     IspConfig:
       type: object
