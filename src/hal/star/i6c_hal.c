@@ -274,6 +274,8 @@ int i6c_pipeline_create(char index, short width, short height, char mirror, char
                     break;
             }
         }
+        if (forced && profile > 0)
+            HAL_WARNING("i6c_snr", "forced profile %d requested: non-default modes are unverified on i6c and the sensor may stay in default mode\n", profile);
         if (forced)
             choice = sensor_mode_select(profile, modes, limit + 1, width, height, framerate);
         if (choice.index < 0)

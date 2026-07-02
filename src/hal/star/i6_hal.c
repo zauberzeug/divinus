@@ -266,7 +266,7 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
         // Off the stack: this bring-up runs on a small SDK thread stack and the
         // table is ~1.4 KB; a stack copy corrupts the pipeline (sensor switches
         // but the VPE never feeds the encoder). One bring-up at a time, so static
-        // is safe.
+        // is safe while sdk_start is the single caller of pipeline creation.
         static sensor_mode modes[SENSOR_MODE_MAX];
         sensor_mode_choice choice = { .index = -1, .fps = framerate };
         for (int i = 0; i <= limit; i++) {
@@ -305,7 +305,7 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
     // The sensor library applies the per-mode register set only at Enable, so the
     // resolution is committed across a Disable/Enable bracket here. Setting a non-zero
     // mode before Enable otherwise streams mode-0 geometry and caps the rate at 30fps.
-    i6_snr.fnDisable(_i6_snr_index);
+    i6_snr.fnDisable(_i6_snr_index); /* best-effort: not yet enabled at bring-up */
     if (ret = i6_snr.fnSetResolution(_i6_snr_index, _i6_snr_profile))
         return ret;
     if (ret = i6_snr.fnEnable(_i6_snr_index))
