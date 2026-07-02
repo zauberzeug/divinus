@@ -10,7 +10,6 @@ static int add_rtp_header(unsigned char *packet, int pay_size,
 
 struct udp_emit_ctx {
     int payload_type;
-    int throttle_us;   /* spacing between FU fragments; 0 disables */
 };
 static int udp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
     const unsigned char *body, int body_len, int marker);
@@ -57,6 +56,15 @@ int udp_stream_init(unsigned short port, const char *mcast_addr) {
         HAL_DANGER("stream", "Failed to set socket options: %s\n", strerror(errno));
         goto error;
     }
+
+    /* Sends are unpaced, so the buffer must hold an IDR's burst of fragments;
+       on overflow the kernel drops the datagram, which RTP tolerates.
+       SO_SNDBUF is silently capped by net.core.wmem_max, so prefer
+       SO_SNDBUFFORCE where we have the privilege. */
+    int sndbuf = UDP_SNDBUF_SIZE;
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0 &&
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+        HAL_WARNING("stream", "setsockopt(SO_SNDBUF) failed: %s\n", strerror(errno));
 
     if (mcast_addr) {
         ctx->is_mcast = 1;
@@ -284,10 +292,6 @@ static int udp_emit(void *vctx, const unsigned char *hdr, int hdr_len,
         }
     }
 
-    /* Space out fragments (hdr_len > 0) so a burst of FU packets doesn't
-       overrun the socket buffer. TODO: drop the throttle once the send path
-       is non-blocking. */
-    if (hdr_len && e->throttle_us) usleep(e->throttle_us);
     return EXIT_SUCCESS;
 }
 
@@ -310,7 +314,7 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
 
     if (total_clients == 0 && !g_udp_ctx->is_mcast) return EXIT_SUCCESS;
 
-    struct udp_emit_ctx emit_ctx = {.payload_type = 96, .throttle_us = 100};
+    struct udp_emit_ctx emit_ctx = {.payload_type = 96};
     unsigned char *buf = (unsigned char *)nal_data;
 
     pthread_mutex_lock(&g_udp_ctx->mutex);

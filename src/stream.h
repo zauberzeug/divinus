@@ -22,6 +22,9 @@
 /* Largest RTP payload that keeps the whole datagram within MAX_UDP_PACKET_SIZE. */
 #define UDP_MAX_PAYLOAD (MAX_UDP_PACKET_SIZE - RTP_HEADER_SIZE)
 #define UDP_MAX_CLIENTS 8
+/* Send-buffer size: absorbs a whole IDR burst of back-to-back FU datagrams
+   (a few hundred KB) so nothing has to pace the sends. */
+#define UDP_SNDBUF_SIZE (512 * 1024)
 
 typedef struct {
     struct sockaddr_in addr;
