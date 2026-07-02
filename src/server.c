@@ -268,6 +268,11 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
     for (unsigned int i = 0; i < stream->count; ++i) {
         hal_vidpack *pack = &stream->pack[i];
         unsigned char *pack_data = pack->data + pack->offset;
+        /* The iovec/len_buf arrays below are sized to the nalu[] bound; never
+           trust the vendor count past it. */
+        int naluCnt = pack->naluCnt;
+        if (naluCnt > (int)(sizeof(pack->nalu) / sizeof(pack->nalu[0])))
+            naluCnt = (int)(sizeof(pack->nalu) / sizeof(pack->nalu[0]));
 
         pthread_mutex_lock(&client_fds_mutex);
         for (unsigned int c = 0; c < HTTP_MAX_CLIENTS; ++c) {
@@ -276,7 +281,7 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
 
             int resume_index = 0;
             if (client_fds[c].waiting_key) {
-                resume_index = h26x_resume_index(pack->nalu, pack->naluCnt);
+                resume_index = h26x_resume_index(pack->nalu, naluCnt);
                 if (resume_index < 0)
                     continue;
             }
@@ -285,7 +290,7 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
             struct iovec iov[8 * 3];
             int iovcnt = 0;
             int len_idx = 0;
-            for (int j = resume_index; j < pack->naluCnt; j++) {
+            for (int j = resume_index; j < naluCnt; j++) {
                 int len_size = snprintf(len_buf[len_idx], sizeof(len_buf[len_idx]),
                     "%X\r\n", pack->nalu[j].length);
                 if (len_size <= 0 || len_size >= (int)sizeof(len_buf[len_idx]))
@@ -320,7 +325,7 @@ void send_h26x_to_client(char index, hal_vidstream *stream) {
 
             client_fds[c].waiting_key = false;
             client_fds[c].skipCnt = 0;
-            client_fds[c].nalCnt += (unsigned int)(pack->naluCnt - resume_index);
+            client_fds[c].nalCnt += (unsigned int)(naluCnt - resume_index);
             if (client_fds[c].nalCnt >= 300) {
                 char end[] = "0\r\n\r\n";
                 send_to_client(c, end, sizeof(end) - 1);
