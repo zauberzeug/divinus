@@ -14,7 +14,7 @@ struct FlvState {
     bool header_sent;
     uint32_t timestamp_ms;
     uint32_t audio_timestamp_ms;
-    uint32_t frame_duration_ms;
+    uint64_t frame_count;   /* frames emitted; drives the rational fallback timeline */
 };
 
 void flv_set_config(short width, short height, char framerate, char acodec,

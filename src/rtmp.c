@@ -19,15 +19,10 @@ static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
 static struct FlvState flv_state;
 static bool is_connected, metadata_sent, seq_header_sent;
-static uint32_t start_timestamp;
+static unsigned long long pts_epoch_us;   /* first frame's PTS; 0 until seeded */
 static RtmpPacket *queue_head, *queue_tail;
 static int queue_count;
 static size_t queue_total_bytes;
-
-static uint32_t get_rtmp_timestamp() {
-    if (start_timestamp == 0) start_timestamp = millis();
-    return millis() - start_timestamp;
-}
 
 static int send_data(const void *buf, size_t len) {
     if (socket_fd < 0) return -1;
@@ -355,7 +350,7 @@ int rtmp_init(const char *url) {
     metadata_sent = false;
     int ret = rtmp_start_sequence(url);
     if (ret == 0) {
-        start_timestamp = millis();
+        pts_epoch_us = 0;
         is_connected = true;
 
         if (pthread_create(&recvPid, NULL, recv_thread, NULL)) {
@@ -433,7 +428,21 @@ int rtmp_ingest_video(hal_vidpack *packet, int is_h265) {
 
     pthread_mutex_lock(&rtmp_mutex);
 
-    uint32_t now = get_rtmp_timestamp();
+    /* Ride the vendor PTS (the media clock, µs) like the RTP and fMP4 paths:
+       seed the epoch on the first frame and emit elapsed media time, so the
+       timeline tracks capture cadence rather than fan-out send jitter. Frames
+       with no PTS fall back to the rational frame-rate accumulator. */
+    uint32_t now;
+    if (packet->timestamp) {
+        if (!pts_epoch_us) pts_epoch_us = packet->timestamp;
+        /* Guard the unsigned subtraction: a PTS below the epoch (reorder or a
+           clock reset) would wrap to a garbage timestamp; clamp to 0 instead. */
+        now = packet->timestamp > pts_epoch_us
+            ? (uint32_t)((packet->timestamp - pts_epoch_us) / 1000) : 0;
+    } else {
+        flv_inc_timestamp(&flv_state);
+        now = flv_state.timestamp_ms;
+    }
     flv_state.timestamp_ms = now;
     flv_state.audio_timestamp_ms = now;
 
