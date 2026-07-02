@@ -1,5 +1,6 @@
 #include "app_config.h"
 
+#include "hal/sensor_mode.h"
 #include "stream_cfg.h"
 
 const char *appconf_paths[] = {"./divinus.yaml", "/etc/divinus.yaml"};
@@ -126,6 +127,7 @@ int app_config_save(void) {
     fprintf(file, "  min_isp_gain: %u\n", app_config.min_isp_gain);
     fprintf(file, "  max_isp_gain: %u\n", app_config.max_isp_gain);
     fprintf(file, "  level3dnr: %d\n", app_config.level3dnr);
+    fprintf(file, "  sensor_profile: %d\n", app_config.sensor_profile);
 
     fprintf(file, "mdns:\n");
     fprintf(file, "  enable: %s\n", app_config.mdns_enable ? "true" : "false");
@@ -330,6 +332,7 @@ enum ConfigError app_config_parse(void) {
     app_config.flip = false;
     app_config.antiflicker = 0;
     app_config.level3dnr = 0;
+    app_config.sensor_profile = -1;
 
     app_config.night_mode_enable = false;
     app_config.ir_sensor_pin = PIN_UNSET;
@@ -446,6 +449,8 @@ enum ConfigError app_config_parse(void) {
     parse_uint32(&ini, "isp", "min_isp_gain", 0, UINT_MAX, &app_config.min_isp_gain);
     parse_uint32(&ini, "isp", "max_isp_gain", 0, UINT_MAX, &app_config.max_isp_gain);
     parse_int(&ini, "isp", "level3dnr", 0, 7, &app_config.level3dnr);
+    parse_int(&ini, "isp", "sensor_profile", -1, SENSOR_MODE_MAX - 1,
+        &app_config.sensor_profile);
 
     parse_bool(&ini, "mdns", "enable", &app_config.mdns_enable);
 

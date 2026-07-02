@@ -21,6 +21,12 @@ isp:
   flip: false
   antiflicker: 60
   level3dnr: 0
+  # sensor resolution mode: -1 = auto (first-fit picker, default); or a mode
+  # index from the table divinus logs at startup / GET /api/sensor to force it
+  # (e.g. the native low-latency high-fps crop). Out-of-range falls back to
+  # auto; an over-fast request is capped to the mode's max fps. Runtime: select
+  # in the web UI (ISP -> Sensor mode), then save + restart.
+  sensor_profile: -1
   # exposure: the frame rate is the contract, so the shutter never exceeds the
   # frame period (1e6/fps). 0 = auto (AE free, shutter capped to that budget);
   # max = shutter pinned to the full frame time (AE then drives gain only);

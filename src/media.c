@@ -903,15 +903,18 @@ int sdk_start(void) {
         case HAL_PLATFORM_I6:
             _i6_level3dnr = app_config.level3dnr;
             ret = i6_pipeline_create(0, width,
-            height, app_config.mirror, app_config.flip, framerate); break;
+            height, app_config.mirror, app_config.flip, framerate,
+            app_config.sensor_profile); break;
         case HAL_PLATFORM_I6C:
             _i6_level3dnr = app_config.level3dnr;
             ret = i6c_pipeline_create(0, width,
-            height, app_config.mirror, app_config.flip, framerate); break;
+            height, app_config.mirror, app_config.flip, framerate,
+            app_config.sensor_profile); break;
         case HAL_PLATFORM_M6:
             _i6_level3dnr = app_config.level3dnr;
             ret = m6_pipeline_create(0, width,
-            height, app_config.mirror, app_config.flip, framerate); break;
+            height, app_config.mirror, app_config.flip, framerate,
+            app_config.sensor_profile); break;
         case HAL_PLATFORM_RK:  ret = rk_pipeline_create(width, height); break;
 #elif defined(__arm__) && !defined(__ARM_PCS_VFP)
         case HAL_PLATFORM_AK:  ret = ak_pipeline_create(app_config.mirror,
@@ -995,8 +998,10 @@ int sdk_start(void) {
         plat == HAL_PLATFORM_M6) {
         sensor_mode modes[SENSOR_MODE_MAX];
         int listed = sensor_mode_read(0, modes, SENSOR_MODE_MAX);
-        if (listed > 0)
+        if (listed > 0) {
             sensor_mode_log("sensor", modes, listed);
+            sensor_mode_cache(modes, listed);
+        }
     }
 #endif
 

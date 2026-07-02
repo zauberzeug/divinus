@@ -35,7 +35,7 @@ int i6_channel_unbind(char index);
 int i6_config_load(char *path);
 
 extern int _i6_level3dnr;
-int i6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate);
+int i6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile);
 void i6_pipeline_destroy(void);
 
 int i6_region_create(char handle, hal_rect rect, short opacity);
