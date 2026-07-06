@@ -102,7 +102,7 @@ void *onvif_thread(void) {
         if (!CONTAINS(request, "http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe"))
             continue;
 
-        char device_name[64], device_uuid[64], device_url[128], msgid[100];
+        char device_name[64], device_uuid[64], device_url[128], msgid[100] = "";
         {
             char uuid[37];
             uuid_generate(uuid);
@@ -165,8 +165,19 @@ char* onvif_extract_soap_action(const char* soap_data) {
     return action;
 }
 
+/* Copy a SOAP field spanning [start, end) into a fixed buffer. The bounds come
+   straight from the untrusted request, so reject (return false) anything that
+   would not fit — an unclamped copy here is a remote stack-buffer overflow. */
+static bool soap_field_copy(char *dst, size_t dstsz, const char *start, const char *end) {
+    if (end < start || (size_t)(end - start) >= dstsz) return false;
+    size_t n = (size_t)(end - start);
+    memcpy(dst, start, n);
+    dst[n] = '\0';
+    return true;
+}
+
 bool onvif_validate_soap_auth(const char *soap_data) {
-    const char *created_tag = "Created", *digest_tag = "PasswordDigest", *nonce_tag = "<Nonce", 
+    const char *created_tag = "Created", *digest_tag = "PasswordDigest", *nonce_tag = "<Nonce",
         *pass_tag = "<Password", *type_attr = "Type=\"", *user_tag = "<Username>";
     char *pos, *end, *start;
     char digest = 0, created[64], nonce[64], pass[64], user[64];
@@ -174,8 +185,7 @@ bool onvif_validate_soap_auth(const char *soap_data) {
     if (!(start = strstr(soap_data, user_tag)) ||
         !(start += strlen(user_tag))) return false;
     if (!(end = strstr(start, "</Username>"))) return false;
-    memcpy(user, start, end - start);
-    user[end - start] = '\0';
+    if (!soap_field_copy(user, sizeof(user), start, end)) return false;
 
     if (!EQUALS(user, app_config.onvif_auth_user)) {
         HAL_WARNING("onvif", "Invalid username: %s\n", user);
@@ -189,8 +199,7 @@ bool onvif_validate_soap_auth(const char *soap_data) {
     if (pos && pos < start &&
         strstr(pos + strlen(type_attr), digest_tag)) digest = 1;
     if (!(end = strstr(start, "</Password>"))) return false;
-    memcpy(pass, ++start, end - start);
-    pass[end - start] = '\0';
+    if (!soap_field_copy(pass, sizeof(pass), ++start, end)) return false;
 
     if (digest) {
         char digest_comp[SHA1_DIGEST_SIZE] = {0}, nonce_dec[64], pass_dec[64];
@@ -199,14 +208,12 @@ bool onvif_validate_soap_auth(const char *soap_data) {
         if (!(start = strstr(soap_data, nonce_tag)) ||
             !(start = strchr(start, '>'))) return false;
         if (!(end = strstr(++start, "</Nonce>"))) return false;
-        memcpy(nonce, start, end - start);
-        nonce[end - start] = '\0';
+        if (!soap_field_copy(nonce, sizeof(nonce), start, end)) return false;
 
         if (!(start = strstr(soap_data, created_tag)) ||
             !(start = strchr(start, '>'))) return false;
         if (!(end = strstr(++start, "</Created>"))) return false;
-        memcpy(created, start, end - start);
-        created[end - start] = '\0';
+        if (!soap_field_copy(created, sizeof(created), start, end)) return false;
 
         int nonce_len = base64_decode(nonce_dec, nonce, sizeof(nonce_dec));
         /* base64_decode never returns negative; an empty/undecodable nonce
@@ -324,7 +331,7 @@ void onvif_respond_snapshot(char *response, int *respLen) {
         snprintf(snapshot_url, sizeof(snapshot_url), "http://%s:%s@%s:%d/image.jpg",
             user, pass, netinfo.ipaddr[0], app_config.web_port);
     } else
-        snprintf(snapshot_url, sizeof(snapshot_url), "http:///%s:%d/image.jpg",
+        snprintf(snapshot_url, sizeof(snapshot_url), "http://%s:%d/image.jpg",
             netinfo.ipaddr[0], app_config.web_port);
 
     int maxLen = *respLen;
