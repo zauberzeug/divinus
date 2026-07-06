@@ -1,0 +1,4 @@
+DESCRIBE rtsp://x/stream0 RTSP/1.0
+CSeq: 2
+Accept: application/sdp
+

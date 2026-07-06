@@ -1,0 +1,8 @@
+fuzz_rtsp
+fuzz_http
+.work_rtsp
+.work_http
+crash-*
+oom-*
+timeout-*
+leak-*

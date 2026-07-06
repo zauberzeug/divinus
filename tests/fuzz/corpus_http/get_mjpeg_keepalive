@@ -1,0 +1,6 @@
+GET /mjpeg HTTP/1.1
+Host: cam
+User-Agent: curl/8.0
+Connection: keep-alive
+Authorization: Basic dXNlcjpwYXNz
+

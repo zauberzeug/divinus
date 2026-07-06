@@ -1,0 +1,4 @@
+GET_PARAMETER rtsp://x/stream0 RTSP/1.0
+CSeq: 5
+Session: 12345678
+

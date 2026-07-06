@@ -1,0 +1,5 @@
+GET / HTTP/1.1
+X-User: admin
+X-Pass: secret
+Host: cam
+

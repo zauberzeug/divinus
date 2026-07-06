@@ -1,0 +1,5 @@
+GET /image.jpg?qp=20 HTTP/1.1
+Host: 192.168.1.94
+Authorization: Basic dXNlcjpwYXNz
+Accept: */*
+

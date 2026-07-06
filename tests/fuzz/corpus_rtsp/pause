@@ -1,0 +1,4 @@
+PAUSE rtsp://x/stream0 RTSP/1.0
+CSeq: 6
+Session: 12345678
+
