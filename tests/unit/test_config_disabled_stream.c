@@ -250,6 +250,56 @@ static void test_disabled_night_mode_out_of_range_pin_logs_error(void) {
     assert(strstr(logbuf, "not in a range") != NULL);
 }
 
+static void test_disabled_stream_keeps_params(void) {
+    /* udp_srcport/dest are written unconditionally; a disabled stream section
+       must read them back (5700 != the reset default 0). */
+    load("stream:\n  enable: false\n  udp_srcport: 5700\n"
+         "  dest:\n    - 172.16.0.5:5600\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(!app_config.stream_enable);
+    assert(app_config.stream_udp_srcport == 5700);
+    assert(strcmp(app_config.stream_dests[0], "172.16.0.5:5600") == 0);
+}
+
+static void test_disabled_stream_survives_save_reload(void) {
+    /* Enable the push with a distinctive port + dest list, disable it, then
+       save + reload: the unconditional writer persists them, so a correct
+       parser must keep them — before the fix stream_config_parse early-returned
+       when disabled and the reload dropped the destination. */
+    load("stream:\n  enable: true\n  udp_srcport: 5601\n"
+         "  dest:\n    - 192.168.9.9:5600\n    - 10.0.0.2:6000\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(app_config.stream_enable);
+    assert(app_config.stream_udp_srcport == 5601);
+    assert(strcmp(app_config.stream_dests[0], "192.168.9.9:5600") == 0);
+
+    app_config.stream_enable = false;          /* user turns the push off */
+    assert(app_config_save() == EXIT_SUCCESS);
+    assert(app_config_parse() == CONFIG_OK);
+
+    assert(!app_config.stream_enable);
+    assert(app_config.stream_udp_srcport == 5601);
+    assert(strcmp(app_config.stream_dests[0], "192.168.9.9:5600") == 0);
+    assert(strcmp(app_config.stream_dests[1], "10.0.0.2:6000") == 0);
+}
+
+static void test_stream_all_dest_slots_round_trip(void) {
+    /* Fill every destination slot: parse_list can leave count == the slot
+       count, in which case the sentinel-terminator would write one past the
+       array (guarded in stream_config_parse). Exercise that boundary and
+       confirm all four dests round-trip. */
+    load("stream:\n  enable: true\n  udp_srcport: 5602\n"
+         "  dest:\n    - 10.0.0.1:5600\n    - 10.0.0.2:5600\n"
+         "    - 10.0.0.3:5600\n    - 10.0.0.4:5600\n"
+         JPEG_OFF MJPEG_OFF);
+    assert(app_config.stream_enable);
+    for (int i = 0; i < 4; i++) {
+        char want[32];
+        snprintf(want, sizeof(want), "10.0.0.%d:5600", i + 1);
+        assert(strcmp(app_config.stream_dests[i], want) == 0);
+    }
+}
+
 static void test_disabled_onvif_keeps_auth(void) {
     /* Auth fields are written unconditionally, so a disabled ONVIF section must
        read its credentials back rather than the zero-initialized empties. */
@@ -342,6 +392,9 @@ int main(void) {
     test_disabled_night_mode_keeps_params();
     test_disabled_night_mode_unset_pins_are_silent();
     test_disabled_night_mode_out_of_range_pin_logs_error();
+    test_disabled_stream_keeps_params();
+    test_disabled_stream_survives_save_reload();
+    test_stream_all_dest_slots_round_trip();
     test_disabled_onvif_keeps_auth();
     test_disabled_onvif_survives_save_reload();
     test_disabled_rtsp_survives_save_reload();

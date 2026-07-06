@@ -77,10 +77,33 @@ static void check_chunked_message(uint32_t timestamp, bool extended) {
     close(sv[1]);
 }
 
+/* The fallback FLV timeline (used when no vendor PTS is available) must derive
+   each timestamp as frames*1000/fps, not by adding a truncated 1000/fps per
+   frame: 1000/30 = 33 (vs 33.33) drifts ~1% slow, so an hour runs ~36 s short.
+   Drive a whole stream and require the end timestamp to land on the exact
+   duration. */
+static void check_timeline_no_drift(char fps, uint32_t frames, uint32_t expect_ms) {
+    flv_set_config(1920, 1080, fps, 0, 0, 0, 0);
+    struct FlvState st;
+    memset(&st, 0, sizeof(st));
+    for (uint32_t i = 0; i < frames; i++)
+        assert(flv_inc_timestamp(&st) == BUF_OK);
+    uint32_t drift = st.timestamp_ms > expect_ms ? st.timestamp_ms - expect_ms
+                                                 : expect_ms - st.timestamp_ms;
+    assert(drift <= 1 && "FLV fallback timeline drifts from 1000/fps truncation");
+    /* Monotonically non-decreasing along the way (spot-check the midpoint). */
+    struct FlvState mid;
+    memset(&mid, 0, sizeof(mid));
+    for (uint32_t i = 0; i < frames / 2; i++) flv_inc_timestamp(&mid);
+    assert(mid.timestamp_ms < st.timestamp_ms);
+}
+
 int main(void) {
     check_chunked_message(0x001000, false);
     check_chunked_message(0xFFFFFF, true);
     check_chunked_message(0x01234567, true);
+    check_timeline_no_drift(30, 3000, 100000);  /* 3000 frames @30 fps = 100 s exactly */
+    check_timeline_no_drift(60, 3000, 50000);   /* 3000 frames @60 fps = 50 s exactly */
     puts("test_rtmp_chunk: OK");
     return 0;
 }

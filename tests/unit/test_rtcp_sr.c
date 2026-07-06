@@ -7,11 +7,24 @@
    NTP-immune media clock and only the anchor carries wall-clock. Both come
    from captime_sr_anchor(pts_anchor, capture_us) — pure and host-testable. */
 
+#include <arpa/inet.h>
 #include <assert.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 
+/* The header web that defines connection_item_t / transport_t and the SR
+   emitter, in the same include order src/rtsp/rtp.c uses. */
+#include "rtsp/rtsp_server.h"
+#include "rtsp/common.h"
+#include "rtsp/rtsp.h"
 #include "hal/captime.h"
+#include "rtsp/rtp.h"
+#include "rtsp/rtcp.h"
 #include "rtsp/rfc.h"
 
 static void test_rtp_ts_rides_pts_not_capture_epoch(void) {
@@ -96,12 +109,95 @@ static void test_sr_wire_size_excludes_report_blocks(void) {
     assert(RTCP_SR_NORB_LENGTH == 6u);
 }
 
+/* Loopback UDP pair: a connected sender fd (stands in for server_rtcp_fd, which
+   production connect()s at SETUP) and a bound, read-timed receiver fd. */
+static void udp_pair(int *server_fd, int *recv_fd) {
+    int rfd = socket(AF_INET, SOCK_DGRAM, 0);
+    assert(rfd >= 0);
+    struct sockaddr_in raddr = {.sin_family = AF_INET,
+        .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    assert(!bind(rfd, (struct sockaddr *)&raddr, sizeof(raddr)));
+    socklen_t alen = sizeof(raddr);
+    assert(!getsockname(rfd, (struct sockaddr *)&raddr, &alen));
+    struct timeval tv = {.tv_sec = 2};
+    assert(!setsockopt(rfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)));
+
+    int sfd = socket(AF_INET, SOCK_DGRAM, 0);
+    assert(sfd >= 0);
+    assert(!connect(sfd, (struct sockaddr *)&raddr, sizeof(raddr)));
+
+    *server_fd = sfd;
+    *recv_fd = rfd;
+}
+
+/* Receive one SR datagram and read its cumulative packet/octet counters
+   (network order) from the fixed sender-info offsets. */
+static void recv_sr_counts(int rfd, unsigned int *psent, unsigned int *osent) {
+    unsigned char buf[64];
+    int n = recvfrom(rfd, buf, sizeof(buf), 0, NULL, NULL);
+    assert(n == (int)RTCP_SR_NORB_BYTES && "expected a 28-byte no-RB sender report");
+    *psent = ((unsigned)buf[20] << 24) | ((unsigned)buf[21] << 16) |
+             ((unsigned)buf[22] << 8) | buf[23];
+    *osent = ((unsigned)buf[24] << 24) | ((unsigned)buf[25] << 16) |
+             ((unsigned)buf[26] << 8) | buf[27];
+}
+
+static void test_sr_counts_are_cumulative_across_reports(void) {
+    /* RFC 3550 §6.4.1: psent/osent are totals since transmission start, so two
+       consecutive SRs (with more packets sent in between) must carry the
+       running totals — not per-interval counts. A receiver differencing the two
+       recovers the interval; resetting the counters per SR breaks that math. */
+    int sfd, rfd;
+    udp_pair(&sfd, &rfd);
+
+    struct connection_item_t con;
+    memset(&con, 0, sizeof(con));
+    con.ssrc = 0x1234abcd;
+    assert(!pthread_mutex_init(&con.write_mutex, NULL));
+
+    transport_t *t = &con.trans[0];
+    t->is_tcp = 0;                 /* exercise the UDP send() path */
+    t->server_rtcp_fd = sfd;
+    t->rtcp_tick_org = 90;
+    t->capture_us = 0;             /* no capture time: send-time NTP/RTP pair */
+
+    /* First interval: 10 packets / 12000 octets accumulated, then an SR. */
+    t->rtcp_packet_cnt = 10;
+    t->rtcp_octet = 12000;
+    assert(__rtcp_send_sr(&con, 0) == SUCCESS);
+    unsigned int p1, o1;
+    recv_sr_counts(rfd, &p1, &o1);
+    assert(p1 == 10 && o1 == 12000);
+
+    /* The SR must leave the counters intact (this is the regression the fix
+       guards): only the SR-interval timer resets. */
+    assert(t->rtcp_packet_cnt == 10 && t->rtcp_octet == 12000 &&
+        "SR emission must not reset the cumulative counters");
+    assert(t->rtcp_tick == t->rtcp_tick_org && "SR resets only the interval timer");
+
+    /* Second interval: 15 more packets / 18000 more octets, then a second SR. */
+    t->rtcp_packet_cnt += 15;
+    t->rtcp_octet += 18000;
+    assert(__rtcp_send_sr(&con, 0) == SUCCESS);
+    unsigned int p2, o2;
+    recv_sr_counts(rfd, &p2, &o2);
+
+    /* Cumulative totals, strictly increasing across the two reports. */
+    assert(p2 == 25 && o2 == 30000);
+    assert(p2 > p1 && o2 > o1);
+
+    pthread_mutex_destroy(&con.write_mutex);
+    close(sfd);
+    close(rfd);
+}
+
 int main(void) {
     test_rtp_ts_rides_pts_not_capture_epoch();
     test_receiver_recovers_a_later_frames_capture_time();
     test_receiver_delta_is_wrap_correct();
     test_ntp_fraction_fixed_point_scale();
     test_sr_wire_size_excludes_report_blocks();
+    test_sr_counts_are_cumulative_across_reports();
     puts("test_rtcp_sr: OK");
     return 0;
 }
