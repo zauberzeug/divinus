@@ -1,4 +1,5 @@
 #include "server.h"
+#include "fmp4_fanout.h"
 #include "sock_send.h"
 #include "stream_cfg.h"
 #include "hal/captime.h"
@@ -24,13 +25,16 @@
 /* Caps kernel send buffering so a lagging receiver hits EAGAIN within a
    couple of frames instead of accumulating seconds of stale video */
 #define HTTP_SNDBUF_SIZE (256 * 1024)
-/* MJPEG clients instead get complete-or-skip frame sends, which need the
-   whole JPEG (can exceed 512 KiB at 4K) to fit the send buffer at once;
-   staleness is bounded by the frame fit check, not the buffer size */
-#define HTTP_MJPEG_SNDBUF_SIZE (1024 * 1024)
+/* Complete-or-skip streams (MJPEG, fMP4) send each whole frame/fragment in one
+   shot, so the whole thing -- a 4K JPEG or a large IDR fMP4 fragment, either can
+   exceed 512 KiB -- must fit the send buffer at once, or sock_send_frame_or_skip
+   commits and blocks the venc fan-out; staleness is bounded by the frame fit
+   check, not the buffer size. */
+#define HTTP_SKIP_SNDBUF_SIZE (1024 * 1024)
 /* One log line (not one per frame) once an MJPEG client has been skipped
    this many frames in a row */
 #define MJPEG_SKIP_LOG_THRESHOLD 100
+#define MP4_SKIP_LOG_THRESHOLD 100
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -357,33 +361,18 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
                     default_sample_size;
             }
 
-            err = mp4_set_state(&client_fds[i].mp4);
-            chk_err_continue {
-                struct BitBuf moof_buf, mdat_buf;
-                char mdat_len_buf[50];
-                err = mp4_get_moof(&moof_buf);
-                chk_err_continue err = mp4_get_mdat(&mdat_buf);
-                chk_err_continue ssize_t len_size =
-                    sprintf(len_buf, "%zX\r\n", (ssize_t)moof_buf.offset);
-                ssize_t mdat_len_size =
-                    sprintf(mdat_len_buf, "%zX\r\n", (ssize_t)mdat_buf.offset);
-
-                struct iovec iov[6];
-                iov[0].iov_base = len_buf;
-                iov[0].iov_len = len_size;
-                iov[1].iov_base = moof_buf.buf;
-                iov[1].iov_len = moof_buf.offset;
-                iov[2].iov_base = (void*)"\r\n";
-                iov[2].iov_len = 2;
-                iov[3].iov_base = mdat_len_buf;
-                iov[3].iov_len = mdat_len_size;
-                iov[4].iov_base = mdat_buf.buf;
-                iov[4].iov_len = mdat_buf.offset;
-                iov[5].iov_base = (void*)"\r\n";
-                iov[5].iov_len = 2;
-
-                if (sendv_to_client(i, iov, 6) < 0)
-                    continue;
+            switch (fmp4_send_fragment(client_fds[i].sockFd, &client_fds[i].mp4)) {
+                case SOCK_SEND_SENT:
+                    client_fds[i].skipCnt = 0;
+                    break;
+                case SOCK_SEND_SKIPPED:
+                    if (++client_fds[i].skipCnt == MP4_SKIP_LOG_THRESHOLD)
+                        HAL_INFO("server", "fMP4 client %u is not keeping up, "
+                            "%u consecutive fragments skipped\n", i, client_fds[i].skipCnt);
+                    break;
+                case SOCK_SEND_DEAD:
+                    free_client(i);
+                    break;
             }
         }
         pthread_mutex_unlock(&client_fds_mutex);
@@ -848,6 +837,15 @@ void respond_request(http_request_t *req) {
     }
 
     if (app_config.mp4_enable && EQUALS(req->uri, "/video.mp4")) {
+        /* Complete-or-skip fMP4 (see send_mp4_to_client) needs the whole
+           moof+mdat fragment to fit the send buffer, else sock_send_frame_or_skip
+           commits a too-large IDR and blocks the venc fan-out. Raise the cap like
+           the MJPEG path; SO_SNDBUF is clipped to net.core.wmem_max, so prefer
+           SO_SNDBUFFORCE (may exceed it under CAP_NET_ADMIN). */
+        int sndbuf = HTTP_SKIP_SNDBUF_SIZE;
+        if (setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0 &&
+            setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+            HAL_WARNING("server", "setsockopt(SO_SNDBUF) failed");
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: video/mp4\r\n"
@@ -865,7 +863,7 @@ void respond_request(http_request_t *req) {
            clipped to net.core.wmem_max (192 KiB on the target firmware,
            below one large JPEG frame), so prefer SO_SNDBUFFORCE, which
            may exceed it under CAP_NET_ADMIN */
-        int sndbuf = HTTP_MJPEG_SNDBUF_SIZE;
+        int sndbuf = HTTP_SKIP_SNDBUF_SIZE;
         if (setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0 &&
             setsockopt(req->clntFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
             HAL_WARNING("server", "setsockopt(SO_SNDBUF) failed");
