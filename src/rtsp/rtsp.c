@@ -34,6 +34,8 @@ extern void request_idr();
 #define __STR_SETUP  "SETUP"
 #define __STR_PLAY  "PLAY"
 #define __STR_TEARDOWN  "TEARDOWN"
+#define __STR_GET_PARAMETER "GET_PARAMETER"
+#define __STR_SET_PARAMETER "SET_PARAMETER"
 #define __STR_TRANSPORT  "TRANSPORT"
 #define __STR_CLIENTPORT  "client_port"
 #define __STR_INTERLEAVED "interleaved"
@@ -164,7 +166,7 @@ static void __method_options(struct connection_item_t *p, rtsp_handle h)
 {
     __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
             "CSeq: %d\r\n"
-            "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\r\n"
+            "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE, GET_PARAMETER, SET_PARAMETER\r\n"
             "\r\n", p->cseq);
 }
 
@@ -320,19 +322,46 @@ static void __method_setup(struct connection_item_t *p, rtsp_handle h)
 static void __method_pause(struct connection_item_t *p, rtsp_handle h)
 {
     __rtsp_write(p,
-        "RTSP/1.0 "__RESPONCE_STR_METHODNOTALLOWED "\r\n");
+        "RTSP/1.0 " __RESPONCE_STR_METHODNOTALLOWED "\r\n"
+        "CSeq: %d\r\n"
+        "Allow: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n"
+        "\r\n", p->cseq);
 }
 
 static void __method_record(struct connection_item_t *p, rtsp_handle h)
 {
     __rtsp_write(p,
-        "RTSP/1.0 " __RESPONCE_STR_METHODNOTALLOWED "\r\n");
+        "RTSP/1.0 " __RESPONCE_STR_METHODNOTALLOWED "\r\n"
+        "CSeq: %d\r\n"
+        "Allow: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n"
+        "\r\n", p->cseq);
 }
 
 static void __method_error(struct connection_item_t *p, rtsp_handle h)
 {
     __rtsp_write(p,
-        "RTSP/1.0 " __RESPONCE_STR_SERVERERROR "\r\n");
+        "RTSP/1.0 " __RESPONCE_STR_SERVERERROR "\r\n"
+        "CSeq: %d\r\n"
+        "\r\n", p->cseq);
+}
+
+/* GET_PARAMETER/SET_PARAMETER with an empty body are the RFC 2326 keepalives:
+   answer 200 and echo CSeq, keeping the session alive (never disconnect). */
+static void __method_get_parameter(struct connection_item_t *p, rtsp_handle h)
+{
+    __rtsp_write(p,
+        "RTSP/1.0 200 OK\r\n"
+        "CSeq: %d\r\n"
+        "\r\n", p->cseq);
+}
+
+/* A well-formed but unrecognized method: reply 501 and keep the session. */
+static void __method_not_implemented(struct connection_item_t *p, rtsp_handle h)
+{
+    __rtsp_write(p,
+        "RTSP/1.0 501 Not Implemented\r\n"
+        "CSeq: %d\r\n"
+        "\r\n", p->cseq);
 }
 
 static void __method_play(struct connection_item_t *p, rtsp_handle h)
@@ -379,6 +408,15 @@ static int __method_teardown(struct connection_item_t *p, rtsp_handle h)
         "CSeq: %d\r\n"
         "\r\n", p->cseq);
 
+    /* Release the per-track RTP/RTCP sockets and transport state so TEARDOWN
+       neither leaks the bound UDP sockets nor leaves stale ports for a later
+       PLAY without a fresh SETUP. */
+    for (int i = 0; i < (int)(sizeof(p->trans) / sizeof(*p->trans)); i++) {
+        if (p->trans[i].server_rtp_fd > 0) close(p->trans[i].server_rtp_fd);
+        if (p->trans[i].server_rtcp_fd > 0) close(p->trans[i].server_rtcp_fd);
+    }
+    memset(p->trans, 0, sizeof(p->trans));
+
     p->con_state = __CON_S_INIT;
 
     return SUCCESS;
@@ -414,10 +452,17 @@ static int __message_proc_sock(struct list_t *e, void *p)
                 int len = (head[1] << 8) | head[2];
                 while (len > 0) {
                     int r = fread(buf, 1, min(len, sizeof(buf)), con->fp_tcp_read);
-                    if (r <= 0) break;
+                    if (r <= 0) {
+                        con->con_state = __CON_S_DISCONNECTED;
+                        ASSERT(bufpool_detach(con->pool, con) == SUCCESS, ERR("connection detach failed\n"));
+                        return SUCCESS;
+                    }
                     len -= r;
                 }
                 DBG("discarded interleaved packet (%d bytes)\n", (head[1] << 8) | head[2]);
+            } else {
+                con->con_state = __CON_S_DISCONNECTED;
+                ASSERT(bufpool_detach(con->pool, con) == SUCCESS, ERR("connection detach failed\n"));
             }
             return SUCCESS;
         } else if (first_char != EOF) {
@@ -441,10 +486,18 @@ static int __message_proc_sock(struct list_t *e, void *p)
                 } else if (SCMP(__STR_DESCRIBE, buf))    { con->method = __METHOD_DESCRIBE;
                 } else if (SCMP(__STR_SETUP, buf))       { con->method = __METHOD_SETUP;
                     STR_KEY_NUM(buf, "track=", con->track_id);
+                    if (con->track_id < 0 ||
+                        con->track_id >= (int)(sizeof(con->trans) / sizeof(*con->trans))) {
+                        con->method = __METHOD_UNKNOWN; /* reject; survives header parse -> 501 */
+                        con->track_id = 0;
+                    }
                 } else if (SCMP(__STR_PLAY, buf))        { con->method = __METHOD_PLAY;
                 } else if (SCMP(__STR_RECORDING, buf))   { con->method = __METHOD_RECORDING;
                 } else if (SCMP(__STR_PAUSE, buf))       { con->method = __METHOD_PAUSE;
                 } else if (SCMP(__STR_TEARDOWN, buf))    { con->method = __METHOD_TEARDOWN;
+                } else if (SCMP(__STR_GET_PARAMETER, buf)) { con->method = __METHOD_GET_PARAMETER;
+                } else if (SCMP(__STR_SET_PARAMETER, buf)) { con->method = __METHOD_SET_PARAMETER;
+                } else                                   { con->method = __METHOD_UNKNOWN;
                 } header++;
             }
 
@@ -506,6 +559,9 @@ error:
                 case __METHOD_PAUSE: __method_pause(con, h); break;
                 case __METHOD_RECORDING: __method_record(con, h); break;
                 case __METHOD_TEARDOWN: __method_teardown(con, h); break;
+                case __METHOD_GET_PARAMETER:
+                case __METHOD_SET_PARAMETER: __method_get_parameter(con, h); break;
+                case __METHOD_UNKNOWN: __method_not_implemented(con, h); break;
                 case __METHOD_NONE:
                     /* state DISCONNECTED connections should be garbage collected immediately.
                        but sending thread might watches the connection right now.
@@ -776,8 +832,17 @@ static inline int __accept_proc_sock(rtsp_handle h, int server_fd, struct sock_s
             return SUCCESS;
         }
 
-        /* set server fd to non-blocking */
-        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+        /* Keep the control fd BLOCKING (requests are read via stdio fgets): a
+           request split across TCP segments must wait for the rest instead of
+           hitting EAGAIN, which fgets reports as EOF -> a spurious disconnect.
+           select() gates readability and a recv timeout bounds the wait so a
+           stalled client cannot wedge the control thread. The RTP data path is
+           separate, so this does not affect streaming latency. */
+        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
+        {
+            struct timeval __rcv_to = { .tv_sec = 5, .tv_usec = 0 };
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &__rcv_to, sizeof(__rcv_to));
+        }
 
         /* interleaved RTP rides this fd: without TCP_NODELAY, Nagle holds
            each frame's final sub-MSS segment until the peer's delayed ACK
