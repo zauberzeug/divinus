@@ -184,7 +184,7 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
 
         if (send_bytes == rtp->rtpsize) {
             con->trans[track_id].rtcp_packet_cnt += 1;
-            con->trans[track_id].rtcp_octet += rtp->rtpsize;
+            con->trans[track_id].rtcp_octet += rtp_payload_octets(rtp);
             return SUCCESS;
         }
     } else {
@@ -193,7 +193,7 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
 
         if (send_bytes == rtp->rtpsize) {
             con->trans[track_id].rtcp_packet_cnt += 1;
-            con->trans[track_id].rtcp_octet += rtp->rtpsize;
+            con->trans[track_id].rtcp_octet += rtp_payload_octets(rtp);
             return SUCCESS;
         }
 

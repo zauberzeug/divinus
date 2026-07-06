@@ -109,6 +109,25 @@ static void test_sr_wire_size_excludes_report_blocks(void) {
     assert(RTCP_SR_NORB_LENGTH == 6u);
 }
 
+static void test_osent_counts_payload_octets_only(void) {
+    /* RFC 3550 6.4.1: the SR octet count is payload octets, not including the
+       header. rtp_payload_octets is what the sender accumulates into osent per
+       packet — it must strip the 12-byte fixed header, and on an AU's first
+       packet also the 16-byte abs-capture-time header extension. */
+    struct nal_rtp_t rtp = {0};
+    rtp.rtpsize = (int)sizeof(rtp_hdr_t) + 100;
+    assert(rtp_payload_octets(&rtp) == 100);
+
+    /* first packet of an AU: RFC 8285 extension prepended, x flag set */
+    struct nal_rtp_t first = {0};
+    first.packet.header.x = 1;
+    int ext = captime_abs_capture_ext(first.packet.payload,
+        CAPTIME_ABS_CAPTURE_EXT_ID, 1700000000123456ull);
+    assert(ext == CAPTIME_ABS_CAPTURE_EXT_BYTES);
+    first.rtpsize = (int)sizeof(rtp_hdr_t) + ext + 100;
+    assert(rtp_payload_octets(&first) == 100);
+}
+
 /* Loopback UDP pair: a connected sender fd (stands in for server_rtcp_fd, which
    production connect()s at SETUP) and a bound, read-timed receiver fd. */
 static void udp_pair(int *server_fd, int *recv_fd) {
@@ -197,6 +216,7 @@ int main(void) {
     test_receiver_delta_is_wrap_correct();
     test_ntp_fraction_fixed_point_scale();
     test_sr_wire_size_excludes_report_blocks();
+    test_osent_counts_payload_octets_only();
     test_sr_counts_are_cumulative_across_reports();
     puts("test_rtcp_sr: OK");
     return 0;
