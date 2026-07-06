@@ -152,7 +152,7 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
         if (__interleave_send(con, con->trans[track_id].channel_rtp,
                 &rtp->packet, rtp->rtpsize) == SUCCESS) {
             con->trans[track_id].rtcp_packet_cnt += 1;
-            con->trans[track_id].rtcp_octet += rtp->rtpsize;
+            con->trans[track_id].rtcp_octet += rtp_payload_octets(rtp);
             return SUCCESS;
         }
         send_bytes = -1;
@@ -162,7 +162,7 @@ static inline int __rtp_send_eachconnection(struct list_t *e, void *v)
 
         if (send_bytes == rtp->rtpsize) {
             con->trans[track_id].rtcp_packet_cnt += 1;
-            con->trans[track_id].rtcp_octet += rtp->rtpsize;
+            con->trans[track_id].rtcp_octet += rtp_payload_octets(rtp);
             return SUCCESS;
         }
 

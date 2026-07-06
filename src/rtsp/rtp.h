@@ -53,6 +53,18 @@ struct nal_rtp_t {
     struct list_t list_entry;
 };
 
+/* RFC 3550 6.4.1: the SR octet count is payload octets only — not the fixed
+   header and not the header extension prepended to an AU's first packet
+   (RFC 8285 layout: 4-byte ext header, data length in 32-bit words at
+   bytes 2-3). This path never emits CSRC or padding. */
+static inline int rtp_payload_octets(const struct nal_rtp_t *rtp)
+{
+    int n = rtp->rtpsize - (int)sizeof(rtp_hdr_t);
+    if (rtp->packet.header.x)
+        n -= 4 + 4 * ((rtp->packet.payload[2] << 8) | rtp->packet.payload[3]);
+    return n > 0 ? n : 0;
+}
+
 /******************************************************************************
  *              DECLARATIONS
  ******************************************************************************/
