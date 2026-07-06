@@ -58,43 +58,10 @@ static inline int __rtcp_send_sr(struct connection_item_t *con, int track_id)
             osent: htonl(t->rtcp_octet)}}};
 
     if (t->is_tcp) {
-        unsigned char head[4];
-        head[0] = '$';
-        head[1] = t->channel_rtcp;
-        head[2] = 0;
-        head[3] = RTCP_SR_NORB_BYTES;
-
-        /* a stalled client must not hold write_mutex forever: the venc
-           callback serves every connection through this path */
-        int spins = 0;
-        pthread_mutex_lock(&con->write_mutex);
-        int sent_h = 0;
-        while (sent_h < 4) {
-            int r = send(con->client_fd, head + sent_h, 4 - sent_h, 0);
-            if (r > 0) sent_h += r;
-            else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
-                ++spins <= 10) usleep(1000);
-            else { sent_h = -1; break; }
-        }
-        if (sent_h == 4) {
-            int sent_b = 0;
-            while (sent_b < (int)RTCP_SR_NORB_BYTES) {
-                int r = send(con->client_fd, (char*)&(rtcp) + sent_b,
-                    RTCP_SR_NORB_BYTES - sent_b, 0);
-                if (r > 0) sent_b += r;
-                else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
-                    ++spins <= 10) usleep(1000);
-                else { sent_b = -1; break; }
-            }
-            send_bytes = sent_b;
-        } else {
-            send_bytes = -1;
-        }
-        pthread_mutex_unlock(&con->write_mutex);
-
-        ASSERT(send_bytes == (int)RTCP_SR_NORB_BYTES, ({
-            ERR("send (interleaved):%d:%s\n", send_bytes, strerror(errno));
-            return FAILURE;}));
+        ASSERT(__interleave_send(con, t->channel_rtcp, &rtcp,
+            RTCP_SR_NORB_BYTES) == SUCCESS, ({
+                ERR("send (interleaved):%s\n", strerror(errno));
+                return FAILURE;}));
     } else {
         /* server_rtcp_fd is connect()ed to the client's RTCP port at SETUP,
            so a plain send() reaches the right peer. */

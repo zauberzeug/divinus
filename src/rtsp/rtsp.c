@@ -4,6 +4,7 @@
 #include <sys/time.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <errno.h>
 #include <fcntl.h>
 #include "rtsp_server.h"
@@ -777,6 +778,13 @@ static inline int __accept_proc_sock(rtsp_handle h, int server_fd, struct sock_s
 
         /* set server fd to non-blocking */
         fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+
+        /* interleaved RTP rides this fd: without TCP_NODELAY, Nagle holds
+           each frame's final sub-MSS segment until the peer's delayed ACK
+           (tens of ms), stalling exactly the bytes the decoder needs */
+        int flag = 1;
+        if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0)
+            ERR("setsockopt(TCP_NODELAY):%s\n", strerror(errno));
 
         /* update connection-list exclusively */
         ASSERT(__connection_list_add(h->con_pool, &h->con_list, fd, from_addr) == SUCCESS,

@@ -3,7 +3,10 @@
 
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <unistd.h>
 
 #include "rtsp_server.h"
 
@@ -126,6 +129,49 @@ struct transfer_item_t {
     struct connection_item_t *con;
     bufpool_handle pool;
 };
+
+/* Send one interleaved record ('$' + channel + 2-byte length + body) as a
+   single writev, so each RTP/RTCP packet leaves as one TCP segment instead of
+   a runt header segment followed by the body (pairs with TCP_NODELAY on the
+   accept path). A stalled client must not hold write_mutex forever: the venc
+   callback serves every connection through this path, hence the spin budget. */
+static inline int __interleave_send(struct connection_item_t *con,
+    unsigned char channel, void *body, int len)
+{
+    unsigned char head[4];
+    struct iovec iov[2];
+    int total = 4 + len;
+    int sent = 0, spins = 0, ret = FAILURE;
+
+    head[0] = '$';
+    head[1] = channel;
+    head[2] = (len >> 8) & 0xFF;
+    head[3] = len & 0xFF;
+
+    pthread_mutex_lock(&con->write_mutex);
+    while (sent < total) {
+        int cnt = 0;
+        if (sent < 4) {
+            iov[cnt].iov_base = head + sent;
+            iov[cnt].iov_len = 4 - sent;
+            cnt++;
+        }
+        int off = sent > 4 ? sent - 4 : 0;
+        iov[cnt].iov_base = (char *)body + off;
+        iov[cnt].iov_len = len - off;
+        cnt++;
+
+        ssize_t r = writev(con->client_fd, iov, cnt);
+        if (r > 0) sent += r;
+        else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+            ++spins <= 10) usleep(1000);
+        else break;
+    }
+    if (sent == total) ret = SUCCESS;
+    pthread_mutex_unlock(&con->write_mutex);
+
+    return ret;
+}
 
 struct __rtsp_obj_t {
     pthread_mutex_t mutex;
