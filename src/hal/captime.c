@@ -31,8 +31,9 @@ bool captime_now(unsigned long long pts_us, unsigned long long *out_capture_us)
     struct timespec mono, real;
 
     /* MONOTONIC_RAW (immune to NTP slew) then REALTIME, back-to-back: the
-       residual inter-read skew is sub-µs (two adjacent syscalls), well inside
-       the §8 error budget, so the read order is not significant. */
+       residual inter-read skew is sub-µs (two adjacent syscalls), negligible
+       against the µs-scale capture timestamp, so the read order is not
+       significant. */
     if (clock_gettime(CLOCK_MONOTONIC_RAW, &mono) != 0 ||
         clock_gettime(CLOCK_REALTIME, &real) != 0)
         return false;

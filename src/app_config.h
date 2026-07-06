@@ -51,6 +51,9 @@ struct AppConfig {
     unsigned int min_isp_gain;
     unsigned int max_isp_gain;
     int level3dnr;
+    // Sensor resolution mode: -1 = auto (first-fit picker, the default), or a
+    // mode index to force. Out-of-range falls back to auto. See hal/sensor_mode.
+    int sensor_profile;
 
     // [osd]
     bool osd_enable;

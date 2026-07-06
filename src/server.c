@@ -3,6 +3,7 @@
 #include "sock_send.h"
 #include "stream_cfg.h"
 #include "hal/captime.h"
+#include "hal/sensor_mode.h"
 
 #include "http_headers.h"
 
@@ -644,6 +645,29 @@ void send_html(const int fd, const char *data) {
     free(buf);
 }
 
+static void json_escape(char *dst, size_t dst_size, const char *src) {
+    size_t pos = 0;
+
+    if (!dst_size) return;
+
+    while (*src && pos + 1 < dst_size) {
+        unsigned char c = (unsigned char)*src++;
+
+        if (c < 0x20)
+            continue;
+
+        if (c == '"' || c == '\\') {
+            if (pos + 2 >= dst_size)
+                break;
+            dst[pos++] = '\\';
+        }
+
+        dst[pos++] = (char)c;
+    }
+
+    dst[pos] = '\0';
+}
+
 void parse_request(http_request_t *req) {
     struct sockaddr_in client_sock;
     socklen_t client_sock_len = sizeof(client_sock);
@@ -717,6 +741,13 @@ void respond_request(http_request_t *req) {
         }
 
         char *action = onvif_extract_soap_action(req->payload);
+        if (!action) {
+            /* Malformed SOAP (no <Body>/action): reject before the %s log and
+               the EQUALS() strcmps below, which would dereference NULL and
+               take down the shared HTTP server thread. */
+            send_http_error(req->clntFd, 400);
+            return;
+        }
         HAL_INFO("onvif", "\x1b[32mAction: %s\x1b[0m\n", action);
         respLen = sizeof(response);
 
@@ -1759,6 +1790,61 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"server\":\"%s\"}", app_config.ntp_server);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/sensor")) {
+        const sensor_mode *modes;
+        int n = sensor_mode_cached(&modes);
+        int max_profile = n > 0 ? n - 1 : SENSOR_MODE_MAX - 1;
+
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                /* -1 = auto (first-fit), 0..max_profile = forced mode;
+                   takes effect on the next restart. */
+                if (EQUALS(key, "profile")) {
+                    char *end;
+                    long p = strtol(value, &end, 10);
+
+                    if (end == value || *end != '\0')
+                        continue;
+                    if (p < -1 || p > max_profile)
+                        continue;
+
+                    app_config.sensor_profile = p;
+                }
+            }
+        }
+
+        char body[4096];
+        int off = snprintf(body, sizeof(body),
+            "{\"profile\":%d,\"modes\":[", app_config.sensor_profile);
+        for (int i = 0; i < n && off < (int)sizeof(body); i++) {
+            char desc_json[2 * sizeof(modes[i].desc) + 1];
+            json_escape(desc_json, sizeof(desc_json), modes[i].desc);
+
+            off += snprintf(body + off, sizeof(body) - off,
+                "%s{\"index\":%d,\"desc\":\"%s\",\"crop\":[%u,%u],"
+                "\"output\":[%u,%u],\"minFps\":%u,\"maxFps\":%u}",
+                i ? "," : "", i, desc_json,
+                modes[i].crop_width, modes[i].crop_height,
+                modes[i].out_width, modes[i].out_height,
+                modes[i].min_fps, modes[i].max_fps);
+        }
+        if (off < (int)sizeof(body))
+            snprintf(body + off, sizeof(body) - off, "]}");
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "%s", body);
         send_and_close(req->clntFd, response, respLen);
         return;
     }

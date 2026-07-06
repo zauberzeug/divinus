@@ -2,6 +2,8 @@
 
 #include "i6c_hal.h"
 
+#include "../sensor_mode.h"
+
 i6c_aud_impl  i6c_aud;
 i6c_isp_impl  i6c_isp;
 i6c_rgn_impl  i6c_rgn;
@@ -227,7 +229,25 @@ int i6c_config_load(char *path)
 
 extern int _i6_level3dnr;
 
-int i6c_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate)
+/* See i6_snr_query in i6_hal.c: adapt one vendor resolution for
+   sensor_mode_pick, reading _i6c_snr_index set in i6c_pipeline_create. */
+static int i6c_snr_query(int index, sensor_mode *out)
+{
+    i6c_snr_res resolution;
+    int ret = i6c_snr.fnGetResolution(_i6c_snr_index, index, &resolution);
+    if (ret)
+        return ret;
+    strncpy(out->desc, resolution.desc, sizeof(out->desc) - 1);
+    out->crop_width = resolution.crop.width;
+    out->crop_height = resolution.crop.height;
+    out->out_width = resolution.output.width;
+    out->out_height = resolution.output.height;
+    out->max_fps = resolution.maxFps;
+    out->min_fps = resolution.minFps;
+    return 0;
+}
+
+int i6c_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile)
 {
     int ret;
 
@@ -236,31 +256,28 @@ int i6c_pipeline_create(char index, short width, short height, char mirror, char
 
     {
         unsigned int count;
-        i6c_snr_res resolution;
         if (ret = i6c_snr.fnSetPlaneMode(_i6c_snr_index, 0))
             return ret;
 
         if (ret = i6c_snr.fnGetResolutionCount(_i6c_snr_index, &count))
             return ret;
-        for (char i = 0; i < count; i++) {
-            if (ret = i6c_snr.fnGetResolution(_i6c_snr_index, i, &resolution))
-                return ret;
 
-            if (width > resolution.crop.width ||
-                height > resolution.crop.height ||
-                framerate > resolution.maxFps)
-                continue;
+        // Non-default modes are unverified on i6c: the i6 linear-mode gate and
+        // the Disable/Enable bracket are not applied here, so a forced mode may
+        // silently stay in the sensor's default. Warn but honor the request.
+        if (profile > 0)
+            HAL_WARNING("i6c_snr", "forced profile %d requested: non-default modes are unverified on i6c and the sensor may stay in default mode\n", profile);
 
-            _i6c_snr_profile = i;
-            if (ret = i6c_snr.fnSetResolution(_i6c_snr_index, _i6c_snr_profile))
-                return ret;
-            _i6c_snr_framerate = framerate;
-            if (ret = i6c_snr.fnSetFramerate(_i6c_snr_index, _i6c_snr_framerate))
-                return ret;
-            break;
-        }
-        if (_i6c_snr_profile < 0)
-            return EXIT_FAILURE;
+        sensor_mode_choice choice;
+        if (ret = sensor_mode_pick("i6c_snr", i6c_snr_query, count, profile,
+            width, height, framerate, &choice))
+            return ret;
+        _i6c_snr_profile = choice.index;
+        if (ret = i6c_snr.fnSetResolution(_i6c_snr_index, _i6c_snr_profile))
+            return ret;
+        _i6c_snr_framerate = choice.fps;
+        if (ret = i6c_snr.fnSetFramerate(_i6c_snr_index, _i6c_snr_framerate))
+            return ret;
     }
 
     if (ret = i6c_snr.fnSetOrientation(_i6c_snr_index, mirror, flip))

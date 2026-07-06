@@ -32,7 +32,7 @@ int m6_channel_unbind(char index);
 
 int m6_config_load(char *path);
 
-int m6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate);
+int m6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile);
 void m6_pipeline_destroy(void);
 
 int m6_region_create(char handle, hal_rect rect, short opacity);

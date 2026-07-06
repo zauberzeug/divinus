@@ -545,10 +545,13 @@ enum BufError flv_set_state(struct FlvState *state) {
 }
 
 enum BufError flv_inc_timestamp(struct FlvState *state) {
-    if (state->frame_duration_ms == 0)
-        state->frame_duration_ms = (vid_framerate > 0) ? (1000 / vid_framerate) : 33;
-
-    state->timestamp_ms += state->frame_duration_ms;
+    /* Fallback timeline for when no vendor PTS is available. Derive the
+       timestamp from a frame count as frames*1000/fps rather than adding a
+       per-frame 1000/fps: the latter truncates (33 ms at 30 fps vs 33.33) and
+       accumulates a 1-4% slow drift over a long stream. */
+    unsigned int fps = (vid_framerate > 0) ? (unsigned int)vid_framerate : 30;
+    state->frame_count++;
+    state->timestamp_ms = (uint32_t)(state->frame_count * 1000ull / fps);
     return BUF_OK;
 }
 

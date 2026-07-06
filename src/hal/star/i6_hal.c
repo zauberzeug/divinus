@@ -3,6 +3,7 @@
 #include "i6_hal.h"
 
 #include "../frc.h"
+#include "../sensor_mode.h"
 
 i6_aud_impl  i6_aud;
 i6_isp_impl  i6_isp;
@@ -230,7 +231,25 @@ int i6_config_load(char *path)
 
 int _i6_level3dnr = 1;
 
-int i6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate)
+/* Adapt one vendor resolution into the normalised table for sensor_mode_pick;
+   reads _i6_snr_index set at the top of i6_pipeline_create. */
+static int i6_snr_query(int index, sensor_mode *out)
+{
+    i6_snr_res resolution;
+    int ret = i6_snr.fnGetResolution(_i6_snr_index, index, &resolution);
+    if (ret)
+        return ret;
+    strncpy(out->desc, resolution.desc, sizeof(out->desc) - 1);
+    out->crop_width = resolution.crop.width;
+    out->crop_height = resolution.crop.height;
+    out->out_width = resolution.output.width;
+    out->out_height = resolution.output.height;
+    out->max_fps = resolution.maxFps;
+    out->min_fps = resolution.minFps;
+    return 0;
+}
+
+int i6_pipeline_create(char index, short width, short height, char mirror, char flip, char framerate, int profile)
 {
     int ret;
     int level3dnr = _i6_level3dnr;
@@ -240,34 +259,38 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
 
     {
         unsigned int count;
-        i6_snr_res resolution;
         if (ret = i6_snr.fnSetPlaneMode(_i6_snr_index, 0))
             return ret;
 
+        // The sensor library gates every non-zero resolution behind a linear-mode
+        // flag (CustFunction cmd 0x23, pseudo-register 0x300A = 0x80); without it
+        // SetResolution(N) silently collapses to mode 0 and the high-fps crops are
+        // unreachable. Reverse-engineered on the IMX335; a no-op on sensors that
+        // don't expose the pseudo-register.
+        unsigned short linearMode[2] = { 0x300A, 0x0080 };
+        i6_snr.fnCustomFunction(_i6_snr_index, 0x23, sizeof(linearMode), linearMode, 0);
+
         if (ret = i6_snr.fnGetResolutionCount(_i6_snr_index, &count))
             return ret;
-        for (char i = 0; i < count; i++) {
-            if (ret = i6_snr.fnGetResolution(_i6_snr_index, i, &resolution))
-                return ret;
 
-            if (width > resolution.crop.width ||
-                height > resolution.crop.height ||
-                framerate > resolution.maxFps)
-                continue;
-
-            _i6_snr_profile = i;
-            if (ret = i6_snr.fnSetResolution(_i6_snr_index, _i6_snr_profile))
-                return ret;
-            _i6_snr_framerate = framerate;
-            if (ret = i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate))
-                return ret;
-            break;
-        }
-        if (_i6_snr_profile < 0)
-            return EXIT_FAILURE;
+        sensor_mode_choice choice;
+        if (ret = sensor_mode_pick("i6_snr", i6_snr_query, count, profile,
+            width, height, framerate, &choice))
+            return ret;
+        _i6_snr_profile = choice.index;
+        _i6_snr_framerate = choice.fps;
     }
 
     if (ret = i6_snr.fnSetOrientation(_i6_snr_index, mirror, flip))
+        return ret;
+
+    // The sensor library applies the per-mode register set only at Enable, so the
+    // resolution is committed across a Disable/Enable bracket here. Setting a non-zero
+    // mode before Enable otherwise streams mode-0 geometry and caps the rate at 30fps.
+    i6_snr.fnDisable(_i6_snr_index); /* best-effort: not yet enabled at bring-up */
+    if (ret = i6_snr.fnSetResolution(_i6_snr_index, _i6_snr_profile))
+        return ret;
+    if (ret = i6_snr.fnEnable(_i6_snr_index))
         return ret;
 
     if (ret = i6_snr.fnGetPadInfo(_i6_snr_index, &_i6_snr_pad))
@@ -275,7 +298,11 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
     if (ret = i6_snr.fnGetPlaneInfo(_i6_snr_index, 0, &_i6_snr_plane))
         return ret;
     strncpy(sensor, _i6_snr_plane.sensName, sizeof(sensor) - 1);
-    if (ret = i6_snr.fnEnable(_i6_snr_index))
+    HAL_INFO("i6_snr", "active plane %ux%u precision %u bayer %u\n",
+        _i6_snr_plane.capt.width, _i6_snr_plane.capt.height,
+        _i6_snr_plane.precision, _i6_snr_plane.bayer);
+
+    if (ret = i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate))
         return ret;
 
     {
