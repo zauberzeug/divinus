@@ -75,6 +75,13 @@ active:
 void jpeg_deinit() {
     pthread_mutex_lock(&jpeg_mutex);
 
+    /* Never ran (or failed) init: jpeg_index is not ours to destroy — with
+       sequential channel allocation it would tear down another encoder. */
+    if (!jpeg_module_init) {
+        pthread_mutex_unlock(&jpeg_mutex);
+        return;
+    }
+
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
         case HAL_PLATFORM_I6:  i6_video_destroy(jpeg_index); break;

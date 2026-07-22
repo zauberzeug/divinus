@@ -252,6 +252,12 @@
 			var sel = document.getElementById(endp + '_enable');
 			if (!sel) return;
 			var req = new XMLHttpRequest();
+			/* Reflect the device's answer: a toggle the server rejected or
+			   rolled back must not keep showing the requested state. */
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				applyFields(endp, JSON.parse(req.responseText));
+			};
 			req.open('GET', '/api/' + endp + '?enable=' + encodeURIComponent(sel.value));
 			req.send();
 		}

@@ -1068,7 +1068,12 @@ void respond_request(http_request_t *req) {
                 unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
-                if (EQUALS(key, "width")) {
+                if (EQUALS(key, "enable")) {
+                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
+                        app_config.jpeg_enable = 1;
+                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
+                        app_config.jpeg_enable = 0;
+                } else if (EQUALS(key, "width")) {
                     if (parse_api_int(value, 160, INT_MAX, &v))
                         app_config.jpeg_width = v;
                 } else if (EQUALS(key, "height")) {
@@ -1081,7 +1086,10 @@ void respond_request(http_request_t *req) {
             }
 
             jpeg_deinit();
-            if (app_config.jpeg_enable) jpeg_init();
+            /* Report the real state: a failed re-init must not leave the API
+               (and the WebUI toggle fed by it) claiming snapshots work. */
+            if (app_config.jpeg_enable && jpeg_init())
+                app_config.jpeg_enable = 0;
         }
 
         respLen = sprintf(response,

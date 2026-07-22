@@ -81,11 +81,12 @@ Configures or reads the real-time clock.
 
 Configures JPEG capture parameters.
 
-| Method | Parameters | Description             |
-|--------|------------|-------------------------|
-| GET    | `width`    | Image width (px)        |
-| GET    | `height`   | Image height (px)       |
-| GET    | `qfactor`  | Quality factor (1-100%) |
+| Method | Parameters | Description                    |
+|--------|------------|--------------------------------|
+| GET    | `enable`   | Enable/disable JPEG snapshots  |
+| GET    | `width`    | Image width (px)               |
+| GET    | `height`   | Image height (px)              |
+| GET    | `qfactor`  | Quality factor (1-100%)        |
 
 **Response**
 ```json
