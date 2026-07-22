@@ -167,6 +167,11 @@ paths:
       operationId: jpeg
       summary: Read or set JPEG capture parameters
       parameters:
+        - name: enable
+          in: query
+          description: Enable or disable JPEG snapshot capture.
+          required: false
+          schema: {type: boolean}
         - name: width
           in: query
           description: Image width in pixels.
