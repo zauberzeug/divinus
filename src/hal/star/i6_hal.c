@@ -253,6 +253,7 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
 {
     int ret;
     int level3dnr = _i6_level3dnr;
+    char target_framerate;
 
     _i6_snr_index = index;
     _i6_snr_profile = -1;
@@ -278,7 +279,12 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
             width, height, framerate, &choice))
             return ret;
         _i6_snr_profile = choice.index;
-        _i6_snr_framerate = choice.fps;
+        /* Only the target: the rate is not applied until the Enable below has
+           committed the mode, and recording it here would make that write --
+           and every later refresh_sensor_rate() -- a no-op against a sensor
+           that is still at the mode default. */
+        target_framerate = choice.fps;
+        _i6_snr_framerate = 0;
     }
 
     if (ret = i6_snr.fnSetOrientation(_i6_snr_index, mirror, flip))
@@ -302,7 +308,13 @@ int i6_pipeline_create(char index, short width, short height, char mirror, char 
         _i6_snr_plane.capt.width, _i6_snr_plane.capt.height,
         _i6_snr_plane.precision, _i6_snr_plane.bayer);
 
-    if (ret = i6_snr.fnSetFramerate(_i6_snr_index, _i6_snr_framerate))
+    /* Through i6_sensor_set_rate, not fnSetFramerate directly: Enable leaves the
+       sensor at the mode's default rate and its default shutter, which for a
+       high-fps mode is longer than the requested frame period -- the one case
+       the SDK answers with success and no rate change. The shutter narrowing in
+       i6_sensor_set_rate is what makes the write stick; set_exposure() applies
+       the real exposure policy for the new rate once bring-up completes. */
+    if (ret = i6_sensor_set_rate(target_framerate))
         return ret;
 
     {
@@ -565,8 +577,7 @@ int i6_sensor_set_rate(char framerate)
     /* Narrow the shutter to fit both the current and the new frame period
        before changing the rate: the SDK silently ignores a rate increase
        while the applied shutter still exceeds the shorter new period. */
-    unsigned int safe = MIN(frc_shutter_cap(_i6_snr_framerate, 0),
-                            frc_shutter_cap(framerate, 0));
+    unsigned int safe = frc_rate_change_shutter(_i6_snr_framerate, framerate);
     if (ret = i6_sensor_shutter_limit(safe, safe))
         return ret;
     if (ret = i6_snr.fnSetFramerate(_i6_snr_index, framerate))
