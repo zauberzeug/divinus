@@ -77,6 +77,23 @@ static void test_shutter_cap_clamps_to_frame_budget(void) {
     assert(frc_shutter_cap(0, 0) == 333333);
 }
 
+static void test_rate_change_shutter_fits_both_periods(void) {
+    /* The narrower of the two frame periods, whichever way the rate moves. */
+    assert(frc_rate_change_shutter(15, 120) == 8333);
+    assert(frc_rate_change_shutter(120, 15) == 8333);
+    assert(frc_rate_change_shutter(30, 30) == 33333);
+
+    /* Bring-up, no rate applied yet (0): only the target period constrains the
+       shutter. The auto ceiling must not win here — a shutter longer than the
+       target frame period is exactly what makes the sensor library report
+       success and then leave the rate alone. */
+    assert(frc_rate_change_shutter(0, 120) == 8333);
+    assert(frc_rate_change_shutter(0, 20) == 50000);
+
+    /* Neither side constrains it: just the auto-exposure ceiling. */
+    assert(frc_rate_change_shutter(0, 0) == 333333);
+}
+
 int main(void) {
     test_pacer_decimates_to_configured_rate();
     test_pacer_passes_at_rate_source_through();
@@ -84,6 +101,7 @@ int main(void) {
     test_pacer_recovers_without_burst();
     test_pacer_disabled_without_rate();
     test_shutter_cap_clamps_to_frame_budget();
+    test_rate_change_shutter_fits_both_periods();
     puts("test_frc: OK");
     return 0;
 }

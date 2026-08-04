@@ -23,3 +23,11 @@ unsigned int frc_shutter_cap(int fps, unsigned int shutterUs)
         max = 1000000u / fps;
     return max;
 }
+
+unsigned int frc_rate_change_shutter(int from_fps, int to_fps)
+{
+    unsigned int from = frc_shutter_cap(from_fps, 0);
+    unsigned int to = frc_shutter_cap(to_fps, 0);
+
+    return from < to ? from : to;
+}
