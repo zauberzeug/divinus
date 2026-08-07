@@ -26,3 +26,18 @@ jobs:
       - name: cppcheck (informational until triaged)
         continue-on-error: true
         run: pixi run cppcheck --enable=warning,portability --inline-suppr --suppress='*:src/lib/*' --error-exitcode=1 src
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build libFuzzer harnesses (clang)
+        run: make -C tests/fuzz build
+      - name: HTTP parser fuzz smoke (bounded)
+        run: FUZZ_SECS=45 make -C tests/fuzz smoke-http
+      - name: RTSP parser fuzz smoke (bounded)
+        # Reproduces the #34 SETUP track-id OOB on the unhardened parser in
+        # seconds; runs clean against the hardened rtsp.c. Flip to blocking
+        # (drop continue-on-error) once fix/rtsp-control-robust lands on master.
+        continue-on-error: true
+        run: FUZZ_SECS=45 make -C tests/fuzz smoke-rtsp

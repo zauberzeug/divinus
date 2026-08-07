@@ -1,0 +1,4 @@
+TEARDOWN rtsp://x/stream0 RTSP/1.0
+CSeq: 7
+Session: 12345678
+

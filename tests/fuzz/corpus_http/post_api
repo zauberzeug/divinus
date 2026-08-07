@@ -1,0 +1,6 @@
+POST /api/mjpeg HTTP/1.1
+Host: cam
+Content-Length: 9
+Content-Type: text/plain
+
+enable=1

@@ -7,6 +7,7 @@ easy to maintain and upstream. Three tiers:
 |---|---|---|---|
 | Unit (host-native) | `tests/unit/` | yes | `make -C tests` |
 | Static analysis | `tests/analyze.sh` | yes | `sh tests/analyze.sh` |
+| Fuzzing (host) | `tests/fuzz/` | yes (bounded smoke) | `make -C tests/fuzz smoke` |
 | Integration (live camera) | `tests/integration/` | no (needs hardware) | see below |
 
 Only the vendor-free, hardware-free sources are host-testable: `src/fmt/`
@@ -38,6 +39,35 @@ baseline records pre-existing findings so the gate catches regressions on
 every PR; once a baselined finding is fixed, delete
 its line from the baseline. CodeQL default setup (repo Settings → Code
 security) covers the same class with zero maintenance.
+
+## Fuzzing (libFuzzer)
+
+`tests/fuzz/` holds libFuzzer harnesses for the two request parsers that face
+untrusted network input:
+
+- `fuzz_rtsp.c` — drives the RTSP control-channel parser (`__message_proc_sock`
+  in `src/rtsp/rtsp.c`) with a fuzzed request over in-memory streams.
+- `fuzz_http.c` — drives HTTP request-line + header parsing (`http_headers_parse`
+  in `src/http_headers.c`, the `parse_request()` path).
+
+Each has a checked-in seed corpus (`corpus_rtsp/`, `corpus_http/`). They build
+with clang (libFuzzer ships with it; the unit suite's gcc does not):
+
+```sh
+make -C tests/fuzz build               # compile both harnesses
+make -C tests/fuzz smoke-http          # bounded HTTP campaign (~30s)
+make -C tests/fuzz smoke-rtsp          # bounded RTSP campaign
+FUZZ_SECS=600 make -C tests/fuzz smoke # longer local campaign, both
+```
+
+CI runs a bounded smoke of each on every PR (the `fuzz` job); `apt install clang`
+provides libFuzzer where it is missing.
+
+Initial campaign: the RTSP harness reproduces the SETUP `track_id` heap OOB (an
+out-of-bounds `trans[track_id]` in `__method_setup`) on the unhardened parser in
+seconds — fixed by `fix/rtsp-control-robust`, against which the harness runs clean
+(~900k execs). The HTTP harness is clean (~10M execs). New crashes from future
+campaigns are filed as their own deck cards, not fixed here.
 
 ## Integration (live camera)
 
