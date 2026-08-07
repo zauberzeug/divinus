@@ -46,6 +46,8 @@ test_captime_SRC := $(SRCDIR)/hal/captime.c
 test_rtcp_sr_SRC := $(SRCDIR)/hal/captime.c
 test_gain_SRC := $(SRCDIR)/gain.c
 test_api_int_SRC := $(SRCDIR)/hal/tools.c
+test_rtsp_parse_SRC := $(SRCDIR)/hal/tools.c $(SRCDIR)/hal/captime.c $(SRCDIR)/http_headers.c
+test_rtsp_parse_DEPS := $(SRCDIR)/rtsp/rtsp.c
 
 .PHONY: all clean
 all: $(BINS)
