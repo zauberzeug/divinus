@@ -46,6 +46,7 @@ test_captime_SRC := $(SRCDIR)/hal/captime.c
 test_rtcp_sr_SRC := $(SRCDIR)/hal/captime.c
 test_gain_SRC := $(SRCDIR)/gain.c
 test_api_int_SRC := $(SRCDIR)/hal/tools.c
+test_h26x_gate_DEPS := $(SRCDIR)/h26x_gate.h
 
 .PHONY: all clean
 all: $(BINS)
